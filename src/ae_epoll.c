@@ -31,9 +31,10 @@
 
 #include <sys/epoll.h>
 
+// aeApiState 是 aeEventLoop.apidata 指向的 I/O 多路复用模型对象(使用 epoll 下)
 typedef struct aeApiState {
-    int epfd;
-    struct epoll_event *events;
+    int epfd;                   // epoll_create 函数返回的 epoll 文件描述符
+    struct epoll_event *events; // 存储 epoll_wait 函数返回时已触发的事件数组
 } aeApiState;
 
 static int aeApiCreate(aeEventLoop *eventLoop) {
@@ -106,9 +107,11 @@ static void aeApiDelEvent(aeEventLoop *eventLoop, int fd, int delmask) {
 }
 
 static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
+    // 获取 epoll 模型对应的 aeApiState 结构体对象
     aeApiState *state = eventLoop->apidata;
     int retval, numevents = 0;
 
+    // 阻塞等待事件的发生
     retval = epoll_wait(state->epfd,state->events,eventLoop->setsize,
             tvp ? (tvp->tv_sec*1000 + tvp->tv_usec/1000) : -1);
     if (retval > 0) {
@@ -119,10 +122,12 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
             int mask = 0;
             struct epoll_event *e = state->events+j;
 
+            // 转换事件类型为 Redis 定义的
             if (e->events & EPOLLIN) mask |= AE_READABLE;
             if (e->events & EPOLLOUT) mask |= AE_WRITABLE;
             if (e->events & EPOLLERR) mask |= AE_WRITABLE;
             if (e->events & EPOLLHUP) mask |= AE_WRITABLE;
+            // 记录已发生事件到 fired 数组
             eventLoop->fired[j].fd = e->data.fd;
             eventLoop->fired[j].mask = mask;
         }

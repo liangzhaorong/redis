@@ -350,9 +350,10 @@ void incrRefCount(robj *o) {
     if (o->refcount != OBJ_SHARED_REFCOUNT) o->refcount++;
 }
 
+// 删除对象
 void decrRefCount(robj *o) {
     if (o->refcount == 1) {
-        switch(o->type) {
+        switch(o->type) { // 根据对象类型, 释放其指向数据结构空间
         case OBJ_STRING: freeStringObject(o); break;
         case OBJ_LIST: freeListObject(o); break;
         case OBJ_SET: freeSetObject(o); break;
@@ -362,9 +363,10 @@ void decrRefCount(robj *o) {
         case OBJ_STREAM: freeStreamObject(o); break;
         default: serverPanic("Unknown object type"); break;
         }
-        zfree(o);
+        zfree(o); // 释放对象空间
     } else {
         if (o->refcount <= 0) serverPanic("decrRefCount against refcount <= 0");
+        // 引用计数减 1
         if (o->refcount != OBJ_SHARED_REFCOUNT) o->refcount--;
     }
 }
@@ -1242,6 +1244,7 @@ robj *objectCommandLookup(client *c, robj *key) {
     dictEntry *de;
 
     if ((de = dictFind(c->db->dict,key->ptr)) == NULL) return NULL;
+    // 注意这里获取的是 value 对象, 而非 key 对象
     return (robj*) dictGetVal(de);
 }
 
@@ -1254,6 +1257,18 @@ robj *objectCommandLookupOrReply(client *c, robj *key, robj *reply) {
 
 /* Object command allows to inspect the internals of an Redis Object.
  * Usage: OBJECT <refcount|encoding|idletime|freq> <key> */
+// object 5 个子命令
+// - help: 帮助命令, object 命令使用手册
+// - refcount: 获得指定键关联的值的引用数, 即 redisObject 对象 refcount 属性
+// - encoding: 获得指定键关联的值的内部存储使用的编码, 即 redisObject 对象 encoding 属性
+//   的字符串表达, 对象类型与底层编码对应关系如下:
+//   - string: raw, int, embstr
+//   - list: quicklist
+//   - hash: dict, ziplist
+//   - set: intset, dict
+//   - zset: ziplist, skiplist+dict
+// - idletime: 返回键的空闲时间, 即自上次读写键依赖经过的近似秒数
+// - freq: 返回键的对数访问频率计数器. 当 maxmemory-policy 设置为 LFU 策略时, 此子命令可用
 void objectCommand(client *c) {
     robj *o;
 
@@ -1275,16 +1290,25 @@ NULL
                 == NULL) return;
         addReplyBulkCString(c,strEncoding(o->encoding));
     } else if (!strcasecmp(c->argv[1]->ptr,"idletime") && c->argc == 3) {
+        // idletime 子命令获取 key 对应 value 的空转时间(单位: 秒), 注意是 value 的空转时间,
+        // 而不是 key 的空转时间, 因为 Redis 对象共享机制(0~10000 的 int 对象会共享, 这个区间
+        // 可配), value 对象属性可能会被相互影响, 例如如果 key1 和 key2 的值都是 1, 那么 value
+        // 属性会相互影响.
+        
+        // 获取对象
         if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.nullbulk))
                 == NULL) return;
+        // 如果内存驱逐策略是 LFU 则返回错误
         if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
             addReplyError(c,"An LFU maxmemory policy is selected, idle time not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust.");
             return;
         }
+        // estimateObjectIdleTime 返回空转的毫秒时间
         addReplyLongLong(c,estimateObjectIdleTime(o)/1000);
     } else if (!strcasecmp(c->argv[1]->ptr,"freq") && c->argc == 3) {
         if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.nullbulk))
                 == NULL) return;
+        // 如果内存驱逐策略不是 LFU 则返回错误
         if (!(server.maxmemory_policy & MAXMEMORY_FLAG_LFU)) {
             addReplyError(c,"An LFU maxmemory policy is not selected, access frequency not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust.");
             return;
@@ -1293,6 +1317,7 @@ NULL
          * in case of the key has not been accessed for a long time,
          * because we update the access time only
          * when the key is read or overwritten. */
+        // 计算频率
         addReplyLongLong(c,LFUDecrAndReturn(o));
     } else {
         addReplySubcommandSyntaxError(c);

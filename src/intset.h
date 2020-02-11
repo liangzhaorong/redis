@@ -32,10 +32,21 @@
 #define __INTSET_H
 #include <stdint.h>
 
+// inset 指代整型集合, 是一个有序的、存储整型数据的结构. 当 Redis 集合类型的元素都是整数
+// 并且都处在 64 位有符号整数范围之内时, 使用该结构存储.
+// 
+// 在两种情况下, 底层编码会从 intset 转变为 hashtable.
+// - 一种情况为当元素个数超过一定数量后(默认值为 512), 即使元素类型仍然是整型, 也会将编码
+//   转换为 hashtable, 该值由 ''set-max-intset-entries 512' 配置项决定.
+// - 另一种情况是当增加非整型变量时, 如在集合中增加元素 'a' 后, 会将集合的底层编码从
+// - intset 转换为 hashtable.
+//
+// 整数集合 intset 在 Redis 中可以存储 int16_t、int32_t、int64_t 类型的整型数据, 且
+// 可保证集合中不会出现重复数据.
 typedef struct intset {
-    uint32_t encoding;
-    uint32_t length;
-    int8_t contents[];
+    uint32_t encoding; // 编码类型, 决定每个元素占用几个字节
+    uint32_t length;   // 元素个数
+    int8_t contents[]; // 柔性数组, 根据 encoding 字段决定几个字节表示一个元素
 } intset;
 
 intset *intsetNew(void);

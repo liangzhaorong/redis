@@ -67,44 +67,58 @@ typedef int aeTimeProc(struct aeEventLoop *eventLoop, long long id, void *client
 typedef void aeEventFinalizerProc(struct aeEventLoop *eventLoop, void *clientData);
 typedef void aeBeforeSleepProc(struct aeEventLoop *eventLoop);
 
-/* File event structure */
+/* File event structure: 文件事件结构体 */
 typedef struct aeFileEvent {
+    // 存储监控的文件事件类型, 如 AE_(READABLE|WRITABLE|BARRIER)
     int mask; /* one of AE_(READABLE|WRITABLE|BARRIER) */
-    aeFileProc *rfileProc;
-    aeFileProc *wfileProc;
-    void *clientData;
+    aeFileProc *rfileProc; // 指向读事件处理函数
+    aeFileProc *wfileProc; // 指向写事件处理函数
+    void *clientData;      // 指向对应的客户端对象
 } aeFileEvent;
 
-/* Time event structure */
+/* Time event structure: 时间事件结构体 */
 typedef struct aeTimeEvent {
-    long long id; /* time event identifier. */
-    long when_sec; /* seconds */
-    long when_ms; /* milliseconds */
-    aeTimeProc *timeProc;
-    aeEventFinalizerProc *finalizerProc;
-    void *clientData;
-    struct aeTimeEvent *prev;
+    long long id;   // 时间事件唯一 ID, 通过字段 eventLoop->timeEventNextId 实现
+    long when_sec;  // 时间事件触发的秒数
+    long when_ms;   // 时间事件触发的毫秒数
+    aeTimeProc *timeProc;                // 时间事件处理函数
+    aeEventFinalizerProc *finalizerProc; // 函数指针, 删除时间事件节点前会调用此函数
+    void *clientData;          // 指向对应的客户端对象
+    struct aeTimeEvent *prev;  // 时间事件表采用链表维护
     struct aeTimeEvent *next;
 } aeTimeEvent;
 
-/* A fired event */
+/* A fired event: 触发事件 */
 typedef struct aeFiredEvent {
-    int fd;
-    int mask;
+    int fd;   // 发生事件的 socket 文件描述符
+    int mask; // 发生的事件类型, 如 AE_READABLE 可读事件和 AE_WRITEABLE 可写事件
 } aeFiredEvent;
 
-/* State of an event based program */
+/* State of an event based program: 事件循环结构体 */
 typedef struct aeEventLoop {
+    // 当前已注册的最大文件描述符
     int maxfd;   /* highest file descriptor currently registered */
+    // 事件循环结构体中可跟踪的文件描述符的最大数量
     int setsize; /* max number of file descriptors tracked */
+    // 记录最大的定时事件 id+1
     long long timeEventNextId;
+    // 用于系统时间的矫正
     time_t lastTime;     /* Used to detect system clock skew */
+    // 文件事件表, 存储已注册的文件事件(socket 的可读可写事件)
     aeFileEvent *events; /* Registered events */
+    // 存储被触发的文件事件
     aeFiredEvent *fired; /* Fired events */
+    // 定时事件表
     aeTimeEvent *timeEventHead;
+    // 事件循环结束标志
     int stop;
+    // Redis 底层可以使用 4 种 I/O 多路复用模型(kqueu, epoll 等), apidata 是对这 
+    // 4 种模型的进一步封装.
     void *apidata; /* This is used for polling API specific data */
+    // Redis 服务器需要阻塞等待文件事件的发生, 进程阻塞之前会调用 beforesleep 函数,
+    // 进程因为某种原因被唤醒后会调用 aftersleep 函数
     aeBeforeSleepProc *beforesleep;
+    // 新的循环后需要执行的操作
     aeBeforeSleepProc *aftersleep;
 } aeEventLoop;
 

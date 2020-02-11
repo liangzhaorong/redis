@@ -93,11 +93,14 @@ int activeExpireCycleTryExpire(redisDb *db, dictEntry *de, long long now) {
  * If type is ACTIVE_EXPIRE_CYCLE_SLOW, that normal expire cycle is
  * executed, where the time limit is a percentage of the REDIS_HZ period
  * as specified by the ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC define. */
-
+// 过期键删除
 void activeExpireCycle(int type) {
     /* This function has some global state in order to continue the work
      * incrementally across calls. */
     static unsigned int current_db = 0; /* Last DB tested. */
+    // 静态变量, 函数执行完毕不会释放空间, 可通过该变量判断函数 activeExpireCycle 是否正在执行.
+    // 在函数 activeExpireCycle 赋值为 0, 返回前赋值为 1, 由此便可通过该变量判断 activeExpireCycle 
+    // 是否正在执行.
     static int timelimit_exit = 0;      /* Time limit hit in previous call? */
     static long long last_fast_cycle = 0; /* When last fast cycle ran. */
 
@@ -114,7 +117,9 @@ void activeExpireCycle(int type) {
         /* Don't start a fast cycle if the previous cycle did not exit
          * for time limit. Also don't repeat a fast cycle for the same period
          * as the fast cycle total duration itself. */
+        // 上次 activeExpireCycle 函数是否已经执行完毕
         if (!timelimit_exit) return;
+        // 当前时间距离上次执行快速过期键删除是否已经超过 2000 微妙
         if (start < last_fast_cycle + ACTIVE_EXPIRE_CYCLE_FAST_DURATION*2) return;
         last_fast_cycle = start;
     }
@@ -137,6 +142,7 @@ void activeExpireCycle(int type) {
     timelimit_exit = 0;
     if (timelimit <= 0) timelimit = 1;
 
+    // 快速过期键删除时, 函数执行时间不超过 1000 微妙
     if (type == ACTIVE_EXPIRE_CYCLE_FAST)
         timelimit = ACTIVE_EXPIRE_CYCLE_FAST_DURATION; /* in microseconds. */
 

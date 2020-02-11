@@ -204,7 +204,8 @@ int lpStringToInt64(const char *s, unsigned long slen, int64_t *value) {
 /* Create a new, empty listpack.
  * On success the new listpack is returned, otherwise an error is returned. */
 unsigned char *lpNew(void) {
-    unsigned char *lp = lp_malloc(LP_HDR_SIZE+1);
+    // LP_HDR_SIZE = 6, 为 listpack 的头部
+    unsigned char *lp = lp_malloc(LP_HDR_SIZE+1); // 申请空间
     if (lp == NULL) return NULL;
     lpSetTotalBytes(lp,LP_HDR_SIZE+1);
     lpSetNumElements(lp,0);
@@ -592,6 +593,14 @@ unsigned char *lpGet(unsigned char *p, int64_t *count, unsigned char *intbuf) {
  * For deletion operations ('ele' set to NULL) 'newp' is set to the next
  * element, on the right of the deleted one, or to NULL if the deleted element
  * was the last one. */
+// 参数:
+// - lp: 当前操作的 listpack
+// - ele: 待插入的新元素或者待替换的新元素, ele 为空时, 也就是删除操作
+// - size: ele 的长度
+// - p: 待插入的位置或者待替换的元素位置
+// - where: 有 LP_BEFORE(前插)、LP_AFTER(后插)、LP_REPLACE(替换)
+// - *newp: 用于返回插入的元素、替换的元素、删除元素的下一个元素
+// 该函数返回 null 或者插入的元素, 替换的元素, 删除元素的下一个元素
 unsigned char *lpInsert(unsigned char *lp, unsigned char *ele, uint32_t size, unsigned char *p, int where, unsigned char **newp) {
     unsigned char intenc[LP_MAX_INT_ENCODING_LEN];
     unsigned char backlen[LP_MAX_BACKLEN_SIZE];

@@ -37,8 +37,11 @@
 
 /* Note that these encodings are ordered, so:
  * INTSET_ENC_INT16 < INTSET_ENC_INT32 < INTSET_ENC_INT64. */
+// 当元素值都位于 INT16_MIN 和 INT16_MAX 之间时使用. 该编码方式为每个元素占用 2 个字节
 #define INTSET_ENC_INT16 (sizeof(int16_t))
+// 当元素值都位于 INT32_MIN 和 INT32_MAX 之间时使用. 该编码方式为每个元素占用 4 个字节
 #define INTSET_ENC_INT32 (sizeof(int32_t))
+// 当元素值都位于 INT64_MIN 和 INT64_MAX 之间时使用. 该编码方式为每个元素占用 8 个字节
 #define INTSET_ENC_INT64 (sizeof(int64_t))
 
 /* Return the required encoding for the provided value. */
@@ -117,10 +120,10 @@ static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos) {
     int64_t cur = -1;
 
     /* The value can never be found when the set is empty */
-    if (intrev32ifbe(is->length) == 0) {
+    if (intrev32ifbe(is->length) == 0) { // 如果 intset 中没有元素, 直接返回 0
         if (pos) *pos = 0;
         return 0;
-    } else {
+    } else { // 如果元素大于最大值或者小于最小值, 直接返回 0
         /* Check for the case where we know we cannot find the value,
          * but do know the insert position. */
         if (value > _intsetGet(is,max)) {
@@ -132,7 +135,7 @@ static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos) {
         }
     }
 
-    while(max >= min) {
+    while(max >= min) { // 二分法查找该元素
         mid = ((unsigned int)min + (unsigned int)max) >> 1;
         cur = _intsetGet(is,mid);
         if (value > cur) {
@@ -144,7 +147,7 @@ static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos) {
         }
     }
 
-    if (value == cur) {
+    if (value == cur) { // 查找到返回 1, 未查找到返回 0
         if (pos) *pos = mid;
         return 1;
     } else {
@@ -158,24 +161,27 @@ static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
     uint8_t curenc = intrev32ifbe(is->encoding);
     uint8_t newenc = _intsetValueEncoding(value);
     int length = intrev32ifbe(is->length);
+    // 如果待插入元素小于 0, 说明需要插入 intset 的头部位置.
+    // 如果大于 0, 需要插到 intset 的末尾位置
     int prepend = value < 0 ? 1 : 0;
 
     /* First set new encoding and resize */
     is->encoding = intrev32ifbe(newenc);
-    is = intsetResize(is,intrev32ifbe(is->length)+1);
+    is = intsetResize(is,intrev32ifbe(is->length)+1); // 将 intset 内存空间进行扩容
 
     /* Upgrade back-to-front so we don't overwrite values.
      * Note that the "prepend" variable is used to make sure we have an empty
      * space at either the beginning or the end of the intset. */
+    // 从最后一个元素逐个往前扩容. 注意必须从最后一个元素开始, 否则有可能会导致元素覆盖
     while(length--)
         _intsetSet(is,length+prepend,_intsetGetEncoded(is,length,curenc));
 
     /* Set the value at the beginning or the end. */
-    if (prepend)
+    if (prepend) // 如果待插入元素小于 0, 插入 intset 头部
         _intsetSet(is,0,value);
-    else
+    else // 否则插入末尾位置
         _intsetSet(is,intrev32ifbe(is->length),value);
-    is->length = intrev32ifbe(intrev32ifbe(is->length)+1);
+    is->length = intrev32ifbe(intrev32ifbe(is->length)+1); // 修改 intset 的位置, 将其加 1
     return is;
 }
 
@@ -202,40 +208,43 @@ static void intsetMoveTail(intset *is, uint32_t from, uint32_t to) {
 
 /* Insert an integer in the intset */
 intset *intsetAdd(intset *is, int64_t value, uint8_t *success) {
-    uint8_t valenc = _intsetValueEncoding(value);
+    uint8_t valenc = _intsetValueEncoding(value); // 获取添加元素的编码值
     uint32_t pos;
     if (success) *success = 1;
 
     /* Upgrade encoding if necessary. If we need to upgrade, we know that
      * this value should be either appended (if > 0) or prepended (if < 0),
      * because it lies outside the range of existing values. */
-    if (valenc > intrev32ifbe(is->encoding)) {
+    if (valenc > intrev32ifbe(is->encoding)) { // 如果大于当前 intset 的编码, 说明需要进行升级
         /* This always succeeds, so we don't need to curry *success. */
-        return intsetUpgradeAndAdd(is,value);
+        return intsetUpgradeAndAdd(is,value); // 调用该函数进行升级后添加
     } else {
         /* Abort if the value is already present in the set.
          * This call will populate "pos" with the right position to insert
          * the value when it cannot be found. */
-        if (intsetSearch(is,value,&pos)) {
+        if (intsetSearch(is,value,&pos)) { // 否则先进行查重, 如果已存在该元素, 直接返回
             if (success) *success = 0;
             return is;
         }
 
-        is = intsetResize(is,intrev32ifbe(is->length)+1);
+        // 如果元素不存在, 则添加元素
+        is = intsetResize(is,intrev32ifbe(is->length)+1); // 首先将 intset 占用内存扩容
+        // 如果插入元素在 intset 中间位置, 调用 intsetMoveTail 给元素挪出空间
         if (pos < intrev32ifbe(is->length)) intsetMoveTail(is,pos,pos+1);
     }
 
-    _intsetSet(is,pos,value);
-    is->length = intrev32ifbe(intrev32ifbe(is->length)+1);
+    _intsetSet(is,pos,value); // 保存元素
+    is->length = intrev32ifbe(intrev32ifbe(is->length)+1); // 修改 intset 的长度, 将其加 1
     return is;
 }
 
 /* Delete integer from intset */
 intset *intsetRemove(intset *is, int64_t value, int *success) {
-    uint8_t valenc = _intsetValueEncoding(value);
+    uint8_t valenc = _intsetValueEncoding(value); // 获取待删除元素的编码类型
     uint32_t pos;
     if (success) *success = 0;
 
+    // 待删除元素编码必须小于等于 intset 编码并且查找到该元素, 才会执行删除
     if (valenc <= intrev32ifbe(is->encoding) && intsetSearch(is,value,&pos)) {
         uint32_t len = intrev32ifbe(is->length);
 
@@ -243,16 +252,19 @@ intset *intsetRemove(intset *is, int64_t value, int *success) {
         if (success) *success = 1;
 
         /* Overwrite value with tail and update length */
+        // 如果待删除元素位于中间位置, 则调用 intsetMoveTail 直接覆盖掉该元素
+        // 如果待删除元素位于 intset 末尾, 则 intset 收缩内存后直接将其丢弃
         if (pos < (len-1)) intsetMoveTail(is,pos+1,pos);
         is = intsetResize(is,len-1);
-        is->length = intrev32ifbe(len-1);
+        is->length = intrev32ifbe(len-1); // 修改 intset 的长度, 将其减 1
     }
     return is;
 }
 
 /* Determine whether a value belongs to this set */
 uint8_t intsetFind(intset *is, int64_t value) {
-    uint8_t valenc = _intsetValueEncoding(value);
+    uint8_t valenc = _intsetValueEncoding(value); // 判断编码方式
+    // 编码方式如果大于当前 intset 的编码方式, 直接返回 0. 否则调用 intsetSearch 函数进行查找
     return valenc <= intrev32ifbe(is->encoding) && intsetSearch(is,value,NULL);
 }
 

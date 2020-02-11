@@ -225,15 +225,15 @@
 #define ZIP_IS_STR(enc) (((enc) & ZIP_STR_MASK) < ZIP_STR_MASK)
 
 /* Utility macros.*/
+/* 假设 char* zl 指向压缩列表首地址, 则 Redis 可以通过如下宏定义实现压缩列表各个字段的存取操作 */
 
-/* Return total bytes a ziplist is composed of. */
+/* zl 指向 zlbytes 字段(该字段占 4byte, 存储压缩列表的字节长度) */
 #define ZIPLIST_BYTES(zl)       (*((uint32_t*)(zl)))
 
-/* Return the offset of the last item inside the ziplist. */
+/* zl+4 指向 zltail 字段(占 4byte, 指示压缩列表尾元素相对于压缩列表起始地址的偏移量) */
 #define ZIPLIST_TAIL_OFFSET(zl) (*((uint32_t*)((zl)+sizeof(uint32_t))))
 
-/* Return the length of a ziplist, or UINT16_MAX if the length cannot be
- * determined without scanning the whole ziplist. */
+/* zl+8 指向 zllen 字段(占 2byte, 表示压缩列表的元素个数) */
 #define ZIPLIST_LENGTH(zl)      (*((uint16_t*)((zl)+sizeof(uint32_t)*2)))
 
 /* The size of a ziplist header: two 32 bit integers for the total
@@ -247,12 +247,10 @@
 /* Return the pointer to the first entry of a ziplist. */
 #define ZIPLIST_ENTRY_HEAD(zl)  ((zl)+ZIPLIST_HEADER_SIZE)
 
-/* Return the pointer to the last entry of a ziplist, using the
- * last entry offset inside the ziplist header. */
+/* zl+zltail 指向尾元素首地址; intrev32ifbe 使得数据存取统一采用小端法 */
 #define ZIPLIST_ENTRY_TAIL(zl)  ((zl)+intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl)))
 
-/* Return the pointer to the last byte of a ziplist, which is, the
- * end of ziplist FF entry. */
+/* 压缩列表最后一个字段即为 zlend 字段(占 1byte,  恒为 0xFF) */
 #define ZIPLIST_ENTRY_END(zl)   ((zl)+intrev32ifbe(ZIPLIST_BYTES(zl))-1)
 
 /* Increment the number of items field in the ziplist header. Note that this
@@ -265,6 +263,9 @@
         ZIPLIST_LENGTH(zl) = intrev16ifbe(intrev16ifbe(ZIPLIST_LENGTH(zl))+incr); \
 }
 
+/* 对于压缩列表的任意元素, 获取前一个元素的长度、判断存储的数据类型、获取数据内容都
+ * 需要经过复杂的解码运算. 解码后的结果应该缓存起来, 因此 zlentry 结构体即用于表示
+ * 解码后的压缩列表元素 */
 /* We use this function to receive information about a ziplist entry.
  * Note that this is not how the data is actually encoded, is just what we
  * get filled by a function in order to operate more easily. */
@@ -565,22 +566,27 @@ int64_t zipLoadInteger(unsigned char *p, unsigned char encoding) {
     return ret;
 }
 
-/* Return a struct with all information about an entry. */
+/* zipEntry 用来解码压缩列表的元素, 存储于 zlentry 结构体 */
 void zipEntry(unsigned char *p, zlentry *e) {
 
+    // 解码 previous_entry_length 字段, 此时参数 p 指向元素首地址
     ZIP_DECODE_PREVLEN(p, e->prevrawlensize, e->prevrawlen);
+    // 解码 encoding 字段, 此时首参的结果指向元素首地址偏移 previous_entry_length 字段长度的位置
     ZIP_DECODE_LENGTH(p + e->prevrawlensize, e->encoding, e->lensize, e->len);
     e->headersize = e->prevrawlensize + e->lensize;
     e->p = p;
 }
 
-/* Create a new empty ziplist. */
+/* ziplistNew 创建空的压缩列表, 只需要分配初始存储空间 11(4+4+2+1)个字节, 
+ * 并对 zlbytes、zltail、zllen 和 zlend 字段初始化即可 */
 unsigned char *ziplistNew(void) {
+    // ZIPLIST_HEADER_SIZE = zlbytes + zltail + zllen
     unsigned int bytes = ZIPLIST_HEADER_SIZE+ZIPLIST_END_SIZE;
     unsigned char *zl = zmalloc(bytes);
     ZIPLIST_BYTES(zl) = intrev32ifbe(bytes);
     ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(ZIPLIST_HEADER_SIZE);
     ZIPLIST_LENGTH(zl) = 0;
+    // 结尾标识 0xFF
     zl[bytes-1] = ZIP_END;
     return zl;
 }
@@ -761,6 +767,9 @@ unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsigned cha
         }
     }
 
+    /* encoding 字段标识的是当前元素存储的数据类型和数据长度. 编码时首先尝试将数据内容解析为
+     * 整数, 如果解析成功, 则按照压缩列表整数类型编码存储; 如果解析失败, 则按照压缩列表字节
+     * 数组类型编码存储 */
     /* See if the entry can be encoded */
     if (zipTryEncoding(s,slen,&value,&encoding)) {
         /* 'encoding' is set to the appropriate integer encoding */
@@ -772,6 +781,8 @@ unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsigned cha
     }
     /* We need space for both the length of the previous entry and
      * the length of the payload. */
+    /* reqlen 最终存储的是当前元素所需空间大小, 初始赋值为元素 content 字段所需
+     * 空间大小, 再累加 previous_entry_length 和 encoding 字段所需空间大小 */
     reqlen += zipStorePrevEntryLength(NULL,prevlen);
     reqlen += zipStoreEntryEncoding(NULL,encoding,slen);
 

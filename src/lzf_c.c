@@ -94,6 +94,8 @@
  * 111ooooo LLLLLLLL oooooooo ; backref L+8 octets, o+1=1..4096 offset
  *
  */
+// LZF 数据压缩的基本思想是: 数据与前面重复的, 记录重复位置以及重复长度,
+// 否则直接记录原始数据内容.
 
 unsigned int
 lzf_compress (const void *const in_data, unsigned int in_len,

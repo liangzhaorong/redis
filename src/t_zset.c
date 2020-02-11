@@ -68,7 +68,12 @@ int zslLexValueLteMax(sds value, zlexrangespec *spec);
 
 /* Create a skiplist node with the specified number of levels.
  * The SDS string 'ele' is referenced by the node after the call. */
+// 跳跃表的每个节点都是有序集合的一个元素, 在创建跳跃表节点时, 待创建节点的
+// 层高、分值、member 等都已确定. 如下创建一个跳跃表节点, 并为之分配内存
 zskiplistNode *zslCreateNode(int level, double score, sds ele) {
+    // zskiplistNode 结构体的最后一个元素为柔性数组, 申请内存时需要指定柔性数组的
+    // 大小, 一个节点占用的内存大小为 zskiplistNode 的内存大小与 level 个 
+    // zskiplistLevel 的内存大小之和
     zskiplistNode *zn =
         zmalloc(sizeof(*zn)+level*sizeof(struct zskiplistLevel));
     zn->score = score;
@@ -81,16 +86,21 @@ zskiplist *zslCreate(void) {
     int j;
     zskiplist *zsl;
 
+    // 为跳跃表结构体对象 zsl 分配内存
     zsl = zmalloc(sizeof(*zsl));
+    // 跳跃表层高初始化为 1, 长度初始化为 0
     zsl->level = 1;
     zsl->length = 0;
+    // 将 zsl 的头结点指针指向新创建的头结点
     zsl->header = zslCreateNode(ZSKIPLIST_MAXLEVEL,0,NULL);
+    // 头节点是一个特殊的节点, 不存储有序集合的 member 信息. 头结点是跳跃表
+    // 中第一个插入的节点, 其 level 数组的每项 forward 都为 NULL, span 值都为 0
     for (j = 0; j < ZSKIPLIST_MAXLEVEL; j++) {
         zsl->header->level[j].forward = NULL;
         zsl->header->level[j].span = 0;
     }
     zsl->header->backward = NULL;
-    zsl->tail = NULL;
+    zsl->tail = NULL; // 跳跃表尾指针指向 NULL
     return zsl;
 }
 
@@ -119,8 +129,13 @@ void zslFree(zskiplist *zsl) {
  * The return value of this function is between 1 and ZSKIPLIST_MAXLEVEL
  * (both inclusive), with a powerlaw-alike distribution where higher
  * levels are less likely to be returned. */
+// Redis 通过 zslRandomLevel 随机生成一个 1~64 的值, 作为新建跳跃表节点的高度,
+// 值越大出现的概率越低, 节点层高确定后便不会再修改.
 int zslRandomLevel(void) {
-    int level = 1;
+    int level = 1; // 设置 level 初值为 1
+    // 下面通过 while 循环, 每次生成一个随机值, 取这个值的低 16 位作为 x, 当 x
+    // 小于 0.25 倍的 0xFFFF 时, level 的值加 1; 否则退出 while 循环. 最终返回
+    // level 和 ZSKIPLIST_MAXLEVEL 两者中的最小值.
     while ((random()&0xFFFF) < (ZSKIPLIST_P * 0xFFFF))
         level += 1;
     return (level<ZSKIPLIST_MAXLEVEL) ? level : ZSKIPLIST_MAXLEVEL;
@@ -130,10 +145,15 @@ int zslRandomLevel(void) {
  * exist (up to the caller to enforce that). The skiplist takes ownership
  * of the passed SDS string 'ele'. */
 zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
+    // update: 插入节点时, 需要更新被插入节点每层的前一个节点. 由于每层更新的节点不一样,
+    // 所以将每层需要更新的节点记录在 update[i] 中
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
+    // rank: 记录当前层从 header 节点到 update[i] 节点所经历的步长, 在更新 update[i]
+    // 的 span 和设置新插入节点的 span 时用到
     unsigned int rank[ZSKIPLIST_MAXLEVEL];
     int i, level;
 
+    // 查找节点插入的位置
     serverAssert(!isnan(score));
     x = zsl->header;
     for (i = zsl->level-1; i >= 0; i--) {
@@ -153,6 +173,7 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
      * scores, reinserting the same element should never happen since the
      * caller of zslInsert() should test in the hash table if the element is
      * already inside or not. */
+    // 调整跳跃表高度
     level = zslRandomLevel();
     if (level > zsl->level) {
         for (i = zsl->level; i < level; i++) {
@@ -162,6 +183,7 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
         }
         zsl->level = level;
     }
+    // 插入节点
     x = zslCreateNode(level,score,ele);
     for (i = 0; i < level; i++) {
         x->level[i].forward = update[i]->level[i].forward;
@@ -177,6 +199,7 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
         update[i]->level[i].span++;
     }
 
+    // 调整 backward
     x->backward = (update[0] == zsl->header) ? NULL : update[0];
     if (x->level[0].forward)
         x->level[0].forward->backward = x;
@@ -219,6 +242,7 @@ int zslDelete(zskiplist *zsl, double score, sds ele, zskiplistNode **node) {
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
     int i;
 
+    // 查找需要更新的节点
     x = zsl->header;
     for (i = zsl->level-1; i >= 0; i--) {
         while (x->level[i].forward &&
@@ -1602,9 +1626,9 @@ void zaddGenericCommand(client *c, int flags) {
         if (server.zset_max_ziplist_entries == 0 ||
             server.zset_max_ziplist_value < sdslen(c->argv[scoreidx+1]->ptr))
         {
-            zobj = createZsetObject();
+            zobj = createZsetObject(); // 创建跳跃表结构
         } else {
-            zobj = createZsetZiplistObject();
+            zobj = createZsetZiplistObject(); // 创建压缩列表结构
         }
         dbAdd(c->db,key,zobj);
     } else {

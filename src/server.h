@@ -202,19 +202,34 @@ typedef long long mstime_t; /* millisecond time type. */
 
 /* Command flags. Please check the command table defined in the redis.c file
  * for more information about the meaning of every flag. */
+// 写命令. 相关: set, del, incr, lpush
 #define CMD_WRITE (1<<0)            /* "w" flag */
+// 读命令. 相关: get, exists, llen
 #define CMD_READONLY (1<<1)         /* "r" flag */
+// 内存不足时, 拒绝执行此类命令. 相关: set, append, lpush
 #define CMD_DENYOOM (1<<2)          /* "m" flag */
 #define CMD_MODULE (1<<3)           /* Command exported by module. */
+// 管理命令. 相关: save, shutdown, slaveof
 #define CMD_ADMIN (1<<4)            /* "a" flag */
+// 发布订阅相关命令. 相关: subscribe, unsubscribe
 #define CMD_PUBSUB (1<<5)           /* "p" flag */
+// 命令不可以在 Lua 脚本中使用. 相关: auth, save, brpop
 #define CMD_NOSCRIPT (1<<6)         /* "s" flag */
+// 随机命令, 即使命令请求参数完全相同, 返回结果也可能不同. 相关: srandmember, scan, time
 #define CMD_RANDOM (1<<7)           /* "R" flag */
+// 当在 Lua 脚本使用此类命令时, 需要对输出结果做排序. 相关: sinter, sunion, sdiff
 #define CMD_SORT_FOR_SCRIPT (1<<8)  /* "S" flag */
+// 服务器启动载入过程中, 只能执行此类命令. 相关: select, auth, info
 #define CMD_LOADING (1<<9)          /* "l" flag */
+// 当从服务器与主服务器断开链接, 且从服务器配置 slave-serve-stale-data no 时, 从服务器只能执行
+// 此类命令. 相关: auth, shutdown, info
 #define CMD_STALE (1<<10)           /* "t" flag */
+// 此类命令不会传播给监视器. 相关: exec
 #define CMD_SKIP_MONITOR (1<<11)    /* "M" flag */
+// 集群槽(slot)迁移时有用. 相关: restore-asking
 #define CMD_ASKING (1<<12)          /* "k" flag */
+// 命令执行时间超过门限时, 会记录延迟事件, 此标志用于区分延迟事件类型, F 表示 fast-command.
+// 相关: get, setnx, strlen, exists
 #define CMD_FAST (1<<13)            /* "F" flag */
 #define CMD_MODULE_GETKEYS (1<<14)  /* Use the modules getkeys interface. */
 #define CMD_MODULE_NO_CLUSTER (1<<15) /* Deny on Redis Cluster. */
@@ -610,14 +625,29 @@ typedef struct RedisModuleDigest {
 #define LRU_CLOCK_MAX ((1<<LRU_BITS)-1) /* Max value of obj->lru */
 #define LRU_CLOCK_RESOLUTION 1000 /* LRU clock resolution in ms */
 
+// Redis 是一个 key-value 型数据库, key 只能是字符串, value 可以是字符串、列表、集合、
+// 有序集合和散列表, 这 5 种数据类型用结构体 robj 表示, 称之为 Redis 对象.
 #define OBJ_SHARED_REFCOUNT INT_MAX
 typedef struct redisObject {
     unsigned type:4;
     unsigned encoding:4;
+    // lru 字段占 24bit, 用于实现缓存淘汰策略, 可以在配置文件中使用 maxmemory-policy 配置
+    // 已用内存达到最大内存限制时的缓存淘汰策略. lru 根据用户配置的缓存淘汰策略存储不同数据,
+    // 常用的策略就是 LRU 与 LFU. LRU 的核心思想是, 如果数据最近被访问过, 那么将来被访问的
+    // 几率也更高, 此时 lru 字段存储的是对象访问时间; LFU 的核心思想是, 如果数据过去被访问
+    // 多次, 那么将来被访问的频率也更高, 此时 lru 字段存储的是上次访问时间与访问次数.
     unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
                             * LFU data (least significant 8 bits frequency
                             * and most significant 16 bits access time). */
+    // 存储当前对象的引用计数, 用于实现对象的共享. 共享对象时, refcount 加 1;
+    // 删除对象时, refcount 减 1, 当 refcount 值为 0 时释放对象空间.
     int refcount;
+    // ptr 是 void* 类型的指针, 指向实际存储的某一种数据结构, 但是当 robj 存储的数据
+    // 可以用 long 类型表示时, 数据直接存储在 ptr 字段. 可以看出, 为了创建一个字符串
+    // 对象, 必须分配两次内存, robj 与 sds 存储空间; 两次内存分配效率低下, 且数据分离
+    // 存储降低了计算机高速缓存的效率. 因此提出 OBJ_ENCODING_EMBSTR 编码的字符串, 当
+    // 字符串内容比较短时, 只分配一次内存, robj 与 sds 连续存储, 以此提升内存分配效率
+    // 与数据访问效率.
     void *ptr;
 } robj;
 
@@ -637,7 +667,7 @@ struct evictionPoolEntry; /* Defined in evict.c */
 /* This structure is used in order to represent the output buffer of a client,
  * which is actually a linked list of blocks like that, that is: client->reply. */
 typedef struct clientReplyBlock {
-    size_t size, used;
+    size_t size, used; // size 缓冲区总大小, used 表示缓冲区已使用空间大小
     char buf[];
 } clientReplyBlock;
 
@@ -645,12 +675,27 @@ typedef struct clientReplyBlock {
  * by integers from 0 (the default database) up to the max configured
  * database. The database number is the 'id' field in the structure. */
 typedef struct redisDb {
+    // 存储数据库所有键值对
     dict *dict;                 /* The keyspace for this DB */
+    // 存储键的过期时间
     dict *expires;              /* Timeout of keys with a timeout set */
+    // 使用命令 BLPOP 阻塞获取列表元素时, 如果链表为空, 会阻塞客户端, 同时将此列表
+    // 键记录到 blocking_keys; 当使用命令 PUSH 向列表添加元素时, 会从字典 blocking_keys
+    // 中查找该列表键, 如果找到说明有客户端正阻塞等待获取此列表键, 于是将此列表键记录到
+    // 字典 ready_keys, 以便后续响应正在阻塞的客户端.
     dict *blocking_keys;        /* Keys with clients waiting for data (BLPOP)*/
     dict *ready_keys;           /* Blocked keys that received a PUSH */
+    // Redis 支持事务, 命令 multi 用于开启事务, 命令 exec 用于执行事务; 但是开启事务到
+    // 执行事务期间, 如何保证关心的数据不会被修改呢? Redis 采用乐观锁实现. 开启事务的
+    // 同时可以使用 watch key 命令监控关心的数据键, 而 watched_keys 字典存储的就是被
+    // watch 命令监控的所有数据键, 其中 key-value 分别为数据键与客户端对象. 当 Redis 
+    // 服务器接收到写命令时, 会从字典 watched_keys 中查找该数据键, 如果找到说明有客户端
+    // 正在监控此数据键, 于是标记客户端对象为 dirty; 待 Redis 服务器接收到客户端 exec 命令
+    // 时, 如果客户端带有 dirty 标记, 则会拒绝执行事务.
     dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
+    // 数据库序号, 默认情况下 Redis 有 16 个数据库, id 序号为 0~15
     int id;                     /* Database ID */
+    // 存储数据库对象的平均 TTL, 用于统计
     long long avg_ttl;          /* Average TTL, just for stats */
     list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
 } redisDb;
@@ -721,10 +766,15 @@ typedef struct readyList {
 /* With multiplexing we need to take per-client state.
  * Clients are taken in a linked list. */
 typedef struct client {
+    // 客户端唯一 id, 通过全局变量 server.next_client_id 实现
     uint64_t id;            /* Client incremental unique ID. */
+    // 客户端 socket 的文件描述符
     int fd;                 /* Client socket. */
+    // 客户端使用 select 命令选择的数据库对象
     redisDb *db;            /* Pointer to currently SELECTed DB. */
+    // 客户端名称, 可以使用命令 CLIENT SETNAME 设置
     robj *name;             /* As set by CLIENT SETNAME. */
+    // 输入缓冲区, recv 函数接收到的客户端命令请求会暂时缓存在此缓冲区
     sds querybuf;           /* Buffer we use to accumulate client queries. */
     size_t qb_pos;          /* The position we have read in querybuf. */
     sds pending_querybuf;   /* If this client is flagged as master, this buffer
@@ -732,17 +782,25 @@ typedef struct client {
                                replication stream that we are receiving from
                                the master. */
     size_t querybuf_peak;   /* Recent (100ms or more) peak of querybuf size. */
+    // 输入缓冲区的命令请求是按照 Redis 协议格式编码字符串, 需要解析出命令请求的
+    // 所有参数, 参数个数存储在 argc 字段, 参数内容被解析为 robj 对象, 存储在 argv 数组
     int argc;               /* Num of arguments of current command. */
     robj **argv;            /* Arguments of current command. */
+    // cmd 为待执行的客户端命令; 解析命令请求后, 会根据命令名称查找该命令对应的命令对象,
+    // 存储在客户端 cmd 字段, 可以看到其类型为 struct redisCommand
     struct redisCommand *cmd, *lastcmd;  /* Last command executed. */
     int reqtype;            /* Request protocol type: PROTO_REQ_* */
     int multibulklen;       /* Number of multi bulk arguments left to read. */
     long bulklen;           /* Length of bulk argument in multi bulk request. */
+    // 输出链表, 存储待返回给客户端的命令回复数据
     list *reply;            /* List of reply objects to send to the client. */
+    // 表示输出链表中所有节点的存储空间总和
     unsigned long long reply_bytes; /* Tot bytes of objects in reply list. */
+    // 表示已返回给客户端的字节数
     size_t sentlen;         /* Amount of bytes already sent in the current
                                buffer or object being sent. */
     time_t ctime;           /* Client creation time. */
+    // 客户端上次与服务器交互的时间, 以此实现客户端的超时处理
     time_t lastinteraction; /* Time of the last interaction, used for timeout */
     time_t obuf_soft_limit_reached_time;
     int flags;              /* Client flags: CLIENT_* macros. */
@@ -776,6 +834,10 @@ typedef struct client {
 
     /* Response buffer */
     int bufpos;
+    // 输出缓冲区, 存储待返回给客户端的命令回复数据, bufops 表示输出缓冲区中数据的最大字节
+    // 位置, 显然 sentlen~bufpos 区间的数据都是需要返回给客户端的.
+    // reply 和 buf 都用于缓存待返回给客户端的命令回复数据, 为什么同时需要 reply 和 buf 的
+    // 存在呢? 其实二者只是用于返回不同的数据类型而已.
     char buf[PROTO_REPLY_CHUNK_BYTES];
 } client;
 
@@ -806,21 +868,36 @@ struct sharedObjectsStruct {
     sds minstring, maxstring;
 };
 
+// zskiplistNode 跳跃表节点
 /* ZSETs use a specialized version of Skiplists */
 typedef struct zskiplistNode {
-    sds ele;
-    double score;
+    sds ele; // 用于存储字符串类型的数据
+    double score; // 用于存储排序的分值
+    // 后退指针, 只能指向当前节点最底层的前一个节点, 头节点和第一个节点--backward 指向
+    // NULL, 从后向前遍历跳跃表时使用.
     struct zskiplistNode *backward;
+    // 柔性数组. 每个节点的数组长度不一样, 在生成跳跃表节点时, 随机生成
+    // 一个 1~64 的值, 值越大出现的概率越低.
     struct zskiplistLevel {
+        // 指向本层的下一个节点, 尾节点的 forward 指向 NULL
         struct zskiplistNode *forward;
+        // forward 指向的节点与本节点之间的元素个数. span 值越大, 跳过的节点个数越多
         unsigned long span;
     } level[];
 } zskiplistNode;
+// 跳跃表是 Redis 有序集合的底层实现方式之一, 所以每个节点的 ele 存储有序集合的成员 member 值,
+// score 存储成员的 score 值. 所有节点的分值是按从小到大的方式排序的, 当有序集合的成员分值相同
+// 时, 节点会按 member 的字典序进行排序.
 
+// zskiplist 管理跳跃表节点
 typedef struct zskiplist {
+    // header: 指向跳跃表头节点. 头节点是跳跃表的一个特殊节点, 它的 level 数组元素个数为 64.
+    // 头节点在有序集合中不存储任何 member 和 score 值, ele 值为 NULL, score 值为 0; 也不计入
+    // 跳跃表的总长度. 头节点在初始化时, 64 个元素的 forward 都指向 NULL, span 值都为 0.
+    // tail: 指向跳跃表尾节点
     struct zskiplistNode *header, *tail;
-    unsigned long length;
-    int level;
+    unsigned long length; // 跳跃表长度, 表示除头结点外的节点个数
+    int level; // 跳跃表的高度
 } zskiplist;
 
 typedef struct zset {
@@ -940,6 +1017,7 @@ struct clusterState;
 struct redisServer {
     /* General */
     pid_t pid;                  /* Main process pid. */
+    // 配置文件绝对路径
     char *configfile;           /* Absolute config file path, or NULL */
     char *executable;           /* Absolute executable file path. */
     char **exec_argv;           /* Executable argv vector (copy). */
@@ -947,10 +1025,15 @@ struct redisServer {
     int config_hz;              /* Configured HZ value. May be different than
                                    the actual 'hz' field value if dynamic-hz
                                    is enabled. */
+    // 表示 serverCron 函数的执行频率, 用户可配置, 最小为 1 最大为 500, 默认为 10
     int hz;                     /* serverCron() calls frequency in hertz */
+    // 数据库数组, 数组的每个元素都是 redisDb 类型
     redisDb *db;
+    // 命令字典, Redis 支持的所有命令都存储在这个字典中, key 为命令名称, value 为 
+    // struct redisCommand 对象
     dict *commands;             /* Command table */
     dict *orig_commands;        /* Command table before command renaming. */
+    // Redis 是典型的事件驱动程序, el 代表 Redis 的事件循环, 类型为 aeEventLoop
     aeEventLoop *el;
     unsigned int lruclock;      /* Clock for LRU eviction */
     int shutdown_asap;          /* SHUTDOWN needed ASAP */
@@ -959,6 +1042,7 @@ struct redisServer {
     char *requirepass;          /* Pass for AUTH command, or NULL */
     char *pidfile;              /* PID file path */
     int arch_bits;              /* 32 or 64 depending on sizeof(long) */
+    // 用于记录 serverCron 函数的执行次数
     int cronloops;              /* Number of times the cron function run */
     char runid[CONFIG_RUN_ID_SIZE+1];  /* ID always different at every exec. */
     int sentinel_mode;          /* True if this instance is a Sentinel. */
@@ -973,17 +1057,24 @@ struct redisServer {
                                    client blocked on a module command needs
                                    to be processed. */
     /* Networking */
+    // 服务器监听端口号, 可通过参数 port 配置, 默认端口号 6379
     int port;                   /* TCP listening port */
     int tcp_backlog;            /* TCP listen() backlog */
+    // 绑定的所有 IP 地址, 可通过参数 bind 配置多个, 例如 bind 192.168.1.100 10.0.0.1
     char *bindaddr[CONFIG_BINDADDR_MAX]; /* Addresses we should bind to */
+    // 用户配置的 IP 地址数目, CONFIG_BINDADDR_MAX 常量为 16, 即最多可以绑定 16 个 IP 地址;
+    // Redis 默认会绑定到当前机器所有可用的 Ip 地址.
     int bindaddr_count;         /* Number of addresses in server.bindaddr[] */
     char *unixsocket;           /* UNIX socket path */
     mode_t unixsocketperm;      /* UNIX socket permission */
+    // 针对 bindaddr 字段的所有 IP 地址创建的 socket 文件描述符
     int ipfd[CONFIG_BINDADDR_MAX]; /* TCP socket file descriptors */
+    // 创建的 socket 文件描述符数目
     int ipfd_count;             /* Used slots in ipfd[] */
     int sofd;                   /* Unix socket file descriptor */
     int cfd[CONFIG_BINDADDR_MAX];/* Cluster bus listening socket */
     int cfd_count;              /* Used slots in cfd[] */
+    // 当前连接到 Redis 服务器的所有客户端
     list *clients;              /* List of active clients */
     list *clients_to_close;     /* Clients to close asynchronously */
     list *clients_pending_write; /* There is to write or install handler. */
@@ -1049,8 +1140,11 @@ struct redisServer {
     } inst_metric[STATS_METRIC_COUNT];
     /* Configuration */
     int verbosity;                  /* Loglevel in redis.conf */
+    // 最大空闲时间, 可通过参数 timeout 配置, 结合 client 对象的 lastinteraction 字段,
+    // 当客户端没有与服务器交互的时间超过 maxidletime 时, 会认为客户端超时并释放该客户端连接
     int maxidletime;                /* Client timeout in seconds */
     int tcpkeepalive;               /* Set SO_KEEPALIVE if non-zero. */
+    // 是否开启周期性删除过期键策略, 用户可通过 set-active-expire 指令配置
     int active_expire_enabled;      /* Can be disabled for testing purposes. */
     int active_defrag_enabled;
     size_t active_defrag_ignore_bytes; /* minimum amount of fragmentation waste to start active defrag */
@@ -1060,6 +1154,7 @@ struct redisServer {
     int active_defrag_cycle_max;       /* maximal effort for defrag in CPU percentage */
     unsigned long active_defrag_max_scan_fields; /* maximum number of fields of set/hash/zset/list to process from within the main dict scan */
     size_t client_max_querybuf_len; /* Limit for client query buffer length */
+    // 数据库的数目, 可通过参数 databases 配置, 默认 16
     int dbnum;                      /* Total number of configured DBs */
     int supervised;                 /* 1 if supervised, 0 otherwise. */
     int supervised_mode;            /* See SUPERVISED_* */
@@ -1161,6 +1256,8 @@ struct redisServer {
     int repl_diskless_sync_delay;   /* Delay to start a diskless repl BGSAVE. */
     /* Replication (slave) */
     char *masterauth;               /* AUTH with this password with master */
+    // 存储当前 Redis 服务器的 master 服务器的域名, 如果为 NULL 说明当前服务器不是某个 Redis
+    // 服务器的 slaver
     char *masterhost;               /* Hostname of master */
     int masterport;                 /* Port of master */
     int repl_timeout;               /* Timeout after N seconds of master idle */
@@ -1304,12 +1401,16 @@ typedef struct pubsubPattern {
 
 typedef void redisCommandProc(client *c);
 typedef int *redisGetKeysProc(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
+// Redis 支持的所有命令初始都存储在全局变量 redisCommandTable, 类型为 redisCommand
 struct redisCommand {
-    char *name;
-    redisCommandProc *proc;
+    char *name;             // 命令名称
+    redisCommandProc *proc; // 命令处理函数
+    // 命令参数数目, 用于校验命令请求格式是否正确; 当 arity 小于 0 时, 表示命令参数数目大于
+    // 等于 arity; 当 arity 大于 0 时, 表示命令参数数目必须为 arity; 注意命令请求中, 命令的
+    // 名称本身也是一个参数, 如 get 命令的参数数目为 2, 命令请求格式为 get key.
     int arity;
-    char *sflags; /* Flags as string representation, one char per flag. */
-    int flags;    /* The actual flags, obtained from the 'sflags' field. */
+    char *sflags; // 命令标志, 例如标识命令是读命令还是写命令
+    int flags;    // 命令的二进制标志, 服务器启动时解析 sflags 字段生成
     /* Use a function to determine keys arguments in a command line.
      * Used for Redis Cluster redirect. */
     redisGetKeysProc *getkeys_proc;
@@ -1317,6 +1418,9 @@ struct redisCommand {
     int firstkey; /* The first argument that's a key (0 = no keys) */
     int lastkey;  /* The last argument that's a key */
     int keystep;  /* The step between first and last key */
+    // calls: 从服务器启动至今命令执行的次数, 用于统计
+    // microseconds: 从服务器启动至今命令总的执行时间
+    // microseconds/calls 即可计算出该命令的平均处理时间, 用于统计
     long long microseconds, calls;
 };
 

@@ -394,14 +394,17 @@ sds sdsgrowzero(sds s, size_t len) {
  *
  * After the call, the passed sds string is no longer valid and all the
  * references must be substituted with the new pointer returned by the call. */
+// 追加 SDS 字符串
 sds sdscatlen(sds s, const void *t, size_t len) {
-    size_t curlen = sdslen(s);
+    size_t curlen = sdslen(s); // 原字符串长度
 
+    // 按需调整空间, 如果 capacity 不够容纳追加的内容, 就会重新分配字节数组并复制
+    // 原字符串的内容到新数组中
     s = sdsMakeRoomFor(s,len);
-    if (s == NULL) return NULL;
-    memcpy(s+curlen, t, len);
-    sdssetlen(s, curlen+len);
-    s[curlen+len] = '\0';
+    if (s == NULL) return NULL; // 内存不足
+    memcpy(s+curlen, t, len);   // 追加目标字符串的内容到字节数组中
+    sdssetlen(s, curlen+len);   // 设置追加后的长度
+    s[curlen+len] = '\0';       // 让字符串以 '\0' 结尾, 便于调试打印, 还可以直接使用 glibc 的字符串函数进行操作
     return s;
 }
 

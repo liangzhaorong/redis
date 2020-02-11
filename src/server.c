@@ -738,9 +738,11 @@ int htNeedsResize(dict *dict) {
 
 /* If the percentage of used slots in the HT reaches HASHTABLE_MIN_FILL
  * we resize the hash table to save memory */
+// 当字典中数据经过一系列操作后, 使用量不到总空间 <10% 时, 就会进行缩容操作, 
+// 将 Redis 数据库占用内存保持在合理的范围内, 不浪费内存
 void tryResizeHashTables(int dbid) {
-    if (htNeedsResize(server.db[dbid].dict))
-        dictResize(server.db[dbid].dict);
+    if (htNeedsResize(server.db[dbid].dict)) // 判断是否达到缩容阈值: used/size < 10%
+        dictResize(server.db[dbid].dict);    // 执行缩容操作
     if (htNeedsResize(server.db[dbid].expires))
         dictResize(server.db[dbid].expires);
 }
@@ -1087,7 +1089,7 @@ void updateCachedTime(void) {
  * so in order to throttle execution of things we want to do less frequently
  * a macro is used: run_with_period(milliseconds) { .... }
  */
-
+// serverCron 实现 Redis 服务器所有定时任务的周期执行
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     int j;
     UNUSED(eventLoop);
@@ -1142,6 +1144,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     if (zmalloc_used_memory() > server.stat_peak_memory)
         server.stat_peak_memory = zmalloc_used_memory();
 
+    // 100 毫秒周期执行
     run_with_period(100) {
         /* Sample the RSS and other metrics here since this is a relatively slow call.
          * We must sample the zmalloc_used at the same time we take the rss, otherwise
@@ -1179,6 +1182,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     }
 
     /* Show some info about non-empty databases */
+    // 5000 毫秒周期执行
     run_with_period(5000) {
         for (j = 0; j < server.dbnum; j++) {
             long long size, used, vkeys;
@@ -1205,9 +1209,11 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     }
 
     /* We need to do a few operations on clients asynchronously. */
+    // 清除超时客户端连接
     clientsCron();
 
     /* Handle background operations on Redis databases. */
+    // 处理 Redis 数据库的后台操作
     databasesCron();
 
     /* Start a scheduled AOF rewrite if this was requested by the user while
@@ -1497,7 +1503,7 @@ void createSharedObjects(void) {
     shared.rpoplpush = createStringObject("RPOPLPUSH",9);
     shared.zpopmin = createStringObject("ZPOPMIN",7);
     shared.zpopmax = createStringObject("ZPOPMAX",7);
-    for (j = 0; j < OBJ_SHARED_INTEGERS; j++) {
+    for (j = 0; j < OBJ_SHARED_INTEGERS; j++) { // 创建 0~10000 个整数对象
         shared.integers[j] =
             makeObjectShared(createObject(OBJ_STRING,(void*)(long)j));
         shared.integers[j]->encoding = OBJ_ENCODING_INT;
@@ -1531,10 +1537,10 @@ void initServerConfig(void) {
     server.timezone = getTimeZone(); /* Initialized by tzset(). */
     server.configfile = NULL;
     server.executable = NULL;
-    server.hz = server.config_hz = CONFIG_DEFAULT_HZ;
+    server.hz = server.config_hz = CONFIG_DEFAULT_HZ; // serverCron 函数执行频率, 默认 10
     server.dynamic_hz = CONFIG_DEFAULT_DYNAMIC_HZ;
     server.arch_bits = (sizeof(long) == 8) ? 64 : 32;
-    server.port = CONFIG_DEFAULT_SERVER_PORT;
+    server.port = CONFIG_DEFAULT_SERVER_PORT;         // 监听端口, 默认 6379
     server.tcp_backlog = CONFIG_DEFAULT_TCP_BACKLOG;
     server.bindaddr_count = 0;
     server.unixsocket = NULL;
@@ -1542,9 +1548,9 @@ void initServerConfig(void) {
     server.ipfd_count = 0;
     server.sofd = -1;
     server.protected_mode = CONFIG_DEFAULT_PROTECTED_MODE;
-    server.dbnum = CONFIG_DEFAULT_DBNUM;
+    server.dbnum = CONFIG_DEFAULT_DBNUM;                // 数据库数目, 默认 16
     server.verbosity = CONFIG_DEFAULT_VERBOSITY;
-    server.maxidletime = CONFIG_DEFAULT_CLIENT_TIMEOUT;
+    server.maxidletime = CONFIG_DEFAULT_CLIENT_TIMEOUT; // 客户端超时时间, 默认 0, 即永不超时
     server.tcpkeepalive = CONFIG_DEFAULT_TCP_KEEPALIVE;
     server.active_expire_enabled = 1;
     server.active_defrag_enabled = CONFIG_DEFAULT_ACTIVE_DEFRAG;
@@ -1594,6 +1600,7 @@ void initServerConfig(void) {
     server.activerehashing = CONFIG_DEFAULT_ACTIVE_REHASHING;
     server.active_defrag_running = 0;
     server.notify_keyspace_events = 0;
+    // 最大客户端数目, 默认 10000
     server.maxclients = CONFIG_DEFAULT_MAX_CLIENTS;
     server.blocked_clients = 0;
     memset(server.blocked_clients_by_type,0,
@@ -1692,7 +1699,7 @@ void initServerConfig(void) {
      * redis.conf using the rename-command directive. */
     server.commands = dictCreate(&commandTableDictType,NULL);
     server.orig_commands = dictCreate(&commandTableDictType,NULL);
-    populateCommandTable();
+    populateCommandTable(); // 初始化命令表, 执行命令表从数组到字典的转化, 同时解析 sflags 生成 flags
     server.delCommand = lookupCommandByCString("del");
     server.multiCommand = lookupCommandByCString("multi");
     server.lpushCommand = lookupCommandByCString("lpush");
@@ -1955,6 +1962,7 @@ int listenToPort(int port, int *fds, int *count) {
                 server.tcp_backlog);
         } else {
             /* Bind IPv4 address. */
+            // 创建 socket 并启动监听, 文件描述符存储在 fds 数组作为返回参数
             fds[*count] = anetTcpServer(server.neterr,port,server.bindaddr[j],
                 server.tcp_backlog);
         }
@@ -1969,7 +1977,7 @@ int listenToPort(int port, int *fds, int *count) {
                     continue;
             return C_ERR;
         }
-        anetNonBlock(NULL,fds[*count]);
+        anetNonBlock(NULL,fds[*count]); // 将 socket 套接字设置为非阻塞
         (*count)++;
     }
     return C_OK;
@@ -2015,9 +2023,10 @@ void resetServerStats(void) {
 void initServer(void) {
     int j;
 
+    /* 忽略 SIGHUP, SIGPIPE 信号 */
     signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
-    setupSignalHandlers();
+    setupSignalHandlers(); // 为特定的信号设置信号处理函数
 
     if (server.syslog_enabled) {
         openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT,
@@ -2041,8 +2050,10 @@ void initServer(void) {
     server.clients_paused = 0;
     server.system_memory_size = zmalloc_get_memory_size();
 
+    // 创建共享对象
     createSharedObjects();
     adjustOpenFilesLimit();
+    /* 创建事件循环结构体 aeEventLoop 实例 */
     server.el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
     if (server.el == NULL) {
         serverLog(LL_WARNING,
@@ -2053,11 +2064,13 @@ void initServer(void) {
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
     /* Open the TCP listening socket for the user commands. */
+    /* 为用户命令打开 TCP 监听套接字 */
     if (server.port != 0 &&
         listenToPort(server.port,server.ipfd,&server.ipfd_count) == C_ERR)
         exit(1);
 
     /* Open the listening Unix domain socket. */
+    /* 打开监听 Unix 域套接字 */
     if (server.unixsocket != NULL) {
         unlink(server.unixsocket); /* don't care if this fails */
         server.sofd = anetUnixServer(server.neterr,server.unixsocket,
@@ -2132,6 +2145,7 @@ void initServer(void) {
 
     /* Create an event handler for accepting new connections in TCP and Unix
      * domain sockets. */
+    /* 为 TCP 和 Unix 域套接字中接收到的新连接创建事件处理 */
     for (j = 0; j < server.ipfd_count; j++) {
         if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
             acceptTcpHandler,NULL) == AE_ERR)
@@ -2185,6 +2199,11 @@ void initServer(void) {
 
 /* Populates the Redis Command Table starting from the hard coded list
  * we have on top of redis.c file. */
+// 当服务器接收到一条命令请求时, 需要从命令表中查找命令, 而 redisCommandTable 命令表是一个数组,
+// 意味着查询命令的时间复杂度为 O(N), 效率低下. 因此 Redis 在服务器初始化时, 会将 redisCommandTable
+// 转换为一个字典存储在 redisServer 对象的 commands 字段, key 为命令名称, value 为命令 
+// redisCommand 对象.
+// populateCommandTable 函数实现了命令表从数组到字典的转化, 同时解析 sflags 生成 flags.
 void populateCommandTable(void) {
     int j;
     int numcommands = sizeof(redisCommandTable)/sizeof(struct redisCommand);
@@ -4049,6 +4068,7 @@ int main(int argc, char **argv) {
     getRandomHexChars(hashseed,sizeof(hashseed));
     dictSetHashFunctionSeed((uint8_t*)hashseed);
     server.sentinel_mode = checkForSentinelMode(argc,argv);
+    // 初始化 server 端配置
     initServerConfig();
     moduleInitModulesSystem();
 
@@ -4137,6 +4157,7 @@ int main(int argc, char **argv) {
             exit(1);
         }
         resetServerSaveParams();
+        // 加载并解析配置文件
         loadServerConfig(configfile,options);
         sdsfree(options);
     }
@@ -4160,6 +4181,7 @@ int main(int argc, char **argv) {
     int background = server.daemonize && !server.supervised;
     if (background) daemonize();
 
+    // 初始化服务器内部变量, 如客户端链接、数据库、全局变量和共享对象等
     initServer();
     if (background || server.pidfile) createPidFile();
     redisSetProcTitle(argv[0]);
@@ -4197,7 +4219,7 @@ int main(int argc, char **argv) {
 
     aeSetBeforeSleepProc(server.el,beforeSleep);
     aeSetAfterSleepProc(server.el,afterSleep);
-    aeMain(server.el);
+    aeMain(server.el); // 开启事件循环
     aeDeleteEventLoop(server.el);
     return 0;
 }

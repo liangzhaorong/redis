@@ -731,6 +731,7 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
     c->flags |= flags;
 }
 
+// acceptTcpHandler 首次经过三次握手, 接收到 tcp 连接请求时, 会调用该函数进行处理
 void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     int cport, cfd, max = MAX_ACCEPTS_PER_CALL;
     char cip[NET_IP_STR_LEN];
@@ -739,6 +740,7 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     UNUSED(privdata);
 
     while(max--) {
+        // 底层调用系统 accept() 函数接收客户端请求
         cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport);
         if (cfd == ANET_ERR) {
             if (errno != EWOULDBLOCK)
@@ -1421,6 +1423,7 @@ int processMultibulkBuffer(client *c) {
  * more query buffer to process, because we read more data from the socket
  * or because a client was blocked and later reactivated, so there could be
  * pending query buffer, already representing a full command, to process. */
+// 解析客户端命令请求
 void processInputBuffer(client *c) {
     server.current_client = c;
 
@@ -1515,6 +1518,8 @@ void processInputBufferAndReplicate(client *c) {
     }
 }
 
+// 解析客户端命令请求的入口函数, 该函数会读取 socket 数据存储到客户端对象的输入缓冲区,
+// 并调用 processInputBuffer 解析命令请求.
 void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     client *c = (client*) privdata;
     int nread, readlen;

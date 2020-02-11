@@ -44,41 +44,53 @@
 /* Unused arguments generate annoying warnings... */
 #define DICT_NOTUSED(V) ((void) V)
 
+// dictEntry 表示 Hash 表中的元素, 用于存储键值对
 typedef struct dictEntry {
-    void *key;
+    void *key;         // 存储键
     union {
-        void *val;
+        void *val;     // db.dict 中的 val
         uint64_t u64;
-        int64_t s64;
+        int64_t s64;   // db.expires 中存储过期时间
         double d;
-    } v;
-    struct dictEntry *next;
+    } v;               // 值, 是个联合体
+    struct dictEntry *next; // 当 Hash 冲突时, 指向冲突的元素, 形成单链表
 } dictEntry;
 
+// dictType 包含对字典进行操作的函数指针
 typedef struct dictType {
-    uint64_t (*hashFunction)(const void *key);
-    void *(*keyDup)(void *privdata, const void *key);
-    void *(*valDup)(void *privdata, const void *obj);
-    int (*keyCompare)(void *privdata, const void *key1, const void *key2);
-    void (*keyDestructor)(void *privdata, void *key);
-    void (*valDestructor)(void *privdata, void *obj);
+    uint64_t (*hashFunction)(const void *key);  // 该字典对应的 Hash 函数
+    void *(*keyDup)(void *privdata, const void *key); // 键对应的复制函数
+    void *(*valDup)(void *privdata, const void *obj); // 值对应的复制函数
+    int (*keyCompare)(void *privdata, const void *key1, const void *key2); // 键的对比函数
+    void (*keyDestructor)(void *privdata, void *key); // 键的销毁函数
+    void (*valDestructor)(void *privdata, void *obj); // 值的销毁函数
 } dictType;
 
+// dictht 哈希表
+// Hash 表的结构体整体占用 32 字节, 其中 table 字段是数组, 作用是存储键值对, 该数组中的元素
+// 指向的是 dictEntry 的结构体, 每个 dictEntry 里面存有键值对.
 /* This is our hash table structure. Every dictionary has two of this as we
  * implement incremental rehashing, for the old to the new table. */
 typedef struct dictht {
-    dictEntry **table;
-    unsigned long size;
-    unsigned long sizemask;
-    unsigned long used;
+    dictEntry **table;      // 指针数组, 用于存储键值对
+    unsigned long size;     // table 数组的大小
+    unsigned long sizemask; // 掩码 = size - 1, 用于计算键的索引值
+    unsigned long used;     // table 数组已存元素个数, 包含 next 单链表的数据
 } dictht;
 
+// dict Redis 在两个结构体 Hash 表及 Hash 表节点外, 还在最外面层封装了一个叫做字典 dict 的
+// 数据结构, 其主要作用是对散列表再进行一层封装, 当字典需要进行一些特殊操作时需要用到里面
+// 的辅助字段.
+// dict 结构体占用 96 字节
 typedef struct dict {
-    dictType *type;
-    void *privdata;
-    dictht ht[2];
-    long rehashidx; /* rehashing not in progress if rehashidx == -1 */
-    unsigned long iterators; /* number of iterators currently running */
+    dictType *type;  // 该字典对应的特定操作函数
+    void *privdata;  // 该字典依赖的数据, 配合 type 字段指向的函数一起使用
+    dictht ht[2];    // Hash 表, 键值对存储在此
+    // rehash 标识. 默认值为 -1, 代表没进行 rehash 操作; 不为 -1 时, 代表正进行
+    // rehash 操作, 存储的值表示 Hash 表 ht[0] 的 rehash 操作进行到了哪个索引值
+    long rehashidx;
+    // 当前运行的安全迭代器数. 当有安全迭代器绑定到该字典时, 会暂停 rehash 操作
+    unsigned long iterators;
 } dict;
 
 /* If safe is set to 1 this is a safe iterator, that means, you can call
@@ -86,12 +98,14 @@ typedef struct dict {
  * iterating. Otherwise it is a non safe iterator, and only dictNext()
  * should be called while iterating. */
 typedef struct dictIterator {
-    dict *d;
-    long index;
+    dict *d;         // 迭代的字典
+    long index;      // 当前迭代到 Hash 表中哪个索引值
+    // table 用于表示当前正在迭代的 Hash 表, 即 ht[0] 与 ht[1];
+    // safe 用于表示当前创建的是否为安全迭代器
     int table, safe;
-    dictEntry *entry, *nextEntry;
+    dictEntry *entry, *nextEntry; // 分别表示 当前节点; 下一个节点
     /* unsafe iterator fingerprint for misuse detection. */
-    long long fingerprint;
+    long long fingerprint; // 字典的指纹, 当字典未发生改变时, 该值不变, 发生改变时则值也随着改变
 } dictIterator;
 
 typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
@@ -137,6 +151,7 @@ typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
         (d)->type->keyCompare((d)->privdata, key1, key2) : \
         (key1) == (key2))
 
+// dictHashKey 调用该键的 Hash 函数得到键的 Hash 值
 #define dictHashKey(d, key) (d)->type->hashFunction(key)
 #define dictGetKey(he) ((he)->key)
 #define dictGetVal(he) ((he)->v.val)

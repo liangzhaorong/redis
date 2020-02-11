@@ -75,6 +75,8 @@ unsigned int getLRUClock(void) {
  * If the current resolution is lower than the frequency we refresh the
  * LRU clock (as it should be in production servers) we return the
  * precomputed value, otherwise we need to resort to a system call. */
+// 获取当前时间, 注意此时间不是实时获取的, Redis 以 1 秒为周期执行系统调用获取精确
+// 时间, 缓存在全局变量 server.lruclock, LRU_CLOCK 函数获取的只是该缓存时间.
 unsigned int LRU_CLOCK(void) {
     unsigned int lruclock;
     if (1000/server.hz <= LRU_CLOCK_RESOLUTION) {
@@ -304,7 +306,9 @@ unsigned long LFUGetTimeInMinutes(void) {
  * that elapsed since the last access. Handle overflow (ldt greater than
  * the current 16 bits minutes time) considering the time as wrapping
  * exactly once. */
+// 获取已经过去的分钟数
 unsigned long LFUTimeElapsed(unsigned long ldt) {
+    // 获取当前时间分钟数, 最大 65 535
     unsigned long now = LFUGetTimeInMinutes();
     if (now >= ldt) return now-ldt;
     return 65535-ldt+now;
@@ -332,9 +336,11 @@ uint8_t LFULogIncr(uint8_t counter) {
  * This function is used in order to scan the dataset for the best object
  * to fit: as we check for the candidate, we incrementally decrement the
  * counter of the scanned objects if needed. */
+// 获取对象访问频率
 unsigned long LFUDecrAndReturn(robj *o) {
     unsigned long ldt = o->lru >> 8;
     unsigned long counter = o->lru & 255;
+    // 衰变算法, lfu_decay_time 为可配置的衰减因子, 默认为 1(分钟)
     unsigned long num_periods = server.lfu_decay_time ? LFUTimeElapsed(ldt) / server.lfu_decay_time : 0;
     if (num_periods)
         counter = (num_periods > counter) ? 0 : counter - num_periods;

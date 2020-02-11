@@ -42,35 +42,41 @@ const char *SDS_NOINIT;
 
 typedef char *sds;
 
+/* 通常结构体会按其所有变量大小的最小公倍数做字节对齐, 而用 packed 修饰后,
+ * 结构体则变为按 1 字节对齐. 以 sdshdr32 为例, 修饰前按 4 字节对齐大小为
+ * 12(4*3) 字节; 修饰后按 1 字节对齐, 注意 buf 是个 char 类型的柔性数组,
+ * 地址连续, 始终在 flags 之后.
+ */
+
 /* Note: sdshdr5 is never used, we just access the flags byte directly.
  * However is here to document the layout of type 5 SDS strings. */
 struct __attribute__ ((__packed__)) sdshdr5 {
-    unsigned char flags; /* 3 lsb of type, and 5 msb of string length */
-    char buf[];
+    unsigned char flags; /* 低 3bit 存储类型, 高 5bit 存储长度 */
+    char buf[];          /* 柔性数组, 存放实际内容 */
 };
 struct __attribute__ ((__packed__)) sdshdr8 {
-    uint8_t len; /* used */
-    uint8_t alloc; /* excluding the header and null terminator */
-    unsigned char flags; /* 3 lsb of type, 5 unused bits */
-    char buf[];
+    uint8_t len;         /* buf 已使用长度, 用 1byte 存储 */
+    uint8_t alloc;       /* buf 总长度, 用 1byte 存储 */
+    unsigned char flags; /* 低 3bit 存储类型, 高 5bit 预留 */
+    char buf[];          /* 柔性数组, 存放实际内容 */
 };
 struct __attribute__ ((__packed__)) sdshdr16 {
-    uint16_t len; /* used */
-    uint16_t alloc; /* excluding the header and null terminator */
-    unsigned char flags; /* 3 lsb of type, 5 unused bits */
-    char buf[];
+    uint16_t len;        /* buf 已使用长度, 用 2byte 存储 */
+    uint16_t alloc;      /* buf 总长度, 用 2byte 存储 */
+    unsigned char flags; /* 低 3bit 存储类型, 高 5bit 预留 */
+    char buf[];          /* 柔性数组, 存放实际内容 */
 };
 struct __attribute__ ((__packed__)) sdshdr32 {
-    uint32_t len; /* used */
-    uint32_t alloc; /* excluding the header and null terminator */
-    unsigned char flags; /* 3 lsb of type, 5 unused bits */
-    char buf[];
+    uint32_t len;        /* buf 已使用长度, 用 4byte 存储 */
+    uint32_t alloc;      /* buf 总长度, 用 4byte 存储 */
+    unsigned char flags; /* 低 3bit 存储类型, 高 5bit 预留 */
+    char buf[];          /* 柔性数组, 存放实际内容 */
 };
 struct __attribute__ ((__packed__)) sdshdr64 {
-    uint64_t len; /* used */
-    uint64_t alloc; /* excluding the header and null terminator */
-    unsigned char flags; /* 3 lsb of type, 5 unused bits */
-    char buf[];
+    uint64_t len;        /* buf 已使用长度, 用 8byte 存储 */
+    uint64_t alloc;      /* buf 总长度, 用 8byte 存储 */
+    unsigned char flags; /* 低 3bit 存储类型, 高 5bit 预留 */
+    char buf[];          /* 柔性数组, 存放实际内容 */
 };
 
 #define SDS_TYPE_5  0

@@ -64,24 +64,33 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     aeEventLoop *eventLoop;
     int i;
 
+    // 为事件循环结构体 aeEventLoop 实例分配空间
     if ((eventLoop = zmalloc(sizeof(*eventLoop))) == NULL) goto err;
+    // 为文件事件结构体 eventLoop->events 实例分配空间
     eventLoop->events = zmalloc(sizeof(aeFileEvent)*setsize);
+    // 为触发事件结构体 eventLoop->fired 实例分配空间
     eventLoop->fired = zmalloc(sizeof(aeFiredEvent)*setsize);
     if (eventLoop->events == NULL || eventLoop->fired == NULL) goto err;
     eventLoop->setsize = setsize;
     eventLoop->lastTime = time(NULL);
+    // 初始化时间事件链表头为 NULL
     eventLoop->timeEventHead = NULL;
     eventLoop->timeEventNextId = 0;
     eventLoop->stop = 0;
     eventLoop->maxfd = -1;
+    // 进入事件循环前需要执行的操作, 此项会在 redis mian() 函数中设置
     eventLoop->beforesleep = NULL;
+    // 进入事件循环后需要执行操作
     eventLoop->aftersleep = NULL;
+    // 在这里, aeApiCreate() 函数对于每个 IO 多路复用模型的实现都有所不同,
+    // 因为每种 IO 多路复用模型的初始化不同.
     if (aeApiCreate(eventLoop) == -1) goto err;
     /* Events with mask == AE_NONE are not set. So let's initialize the
      * vector with it. */
+    // 初始化事件类型掩码为无事件状态
     for (i = 0; i < setsize; i++)
         eventLoop->events[i].mask = AE_NONE;
-    return eventLoop;
+    return eventLoop; // 返回事件循环结构体实例
 
 err:
     if (eventLoop) {
@@ -133,23 +142,28 @@ void aeStop(aeEventLoop *eventLoop) {
     eventLoop->stop = 1;
 }
 
+// 创建对应的文件事件, 并存储在 aeEventLoop 结构体的 events 字段
 int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
         aeFileProc *proc, void *clientData)
 {
+    // 若要注册的文件描述符 fd 超过了事件循环结构体可处理的文件描述符范围, 则返回错误
     if (fd >= eventLoop->setsize) {
         errno = ERANGE;
         return AE_ERR;
     }
+    // 根据待注册的文件描述符 fd 在 I/O 事件表中选择一个对应的空间
     aeFileEvent *fe = &eventLoop->events[fd];
 
+    // 将待注册的文件描述符 fd 添加到事件驱动如 epoll 中
     if (aeApiAddEvent(eventLoop, fd, mask) == -1)
         return AE_ERR;
     fe->mask |= mask;
+    // 设置事件触发时的回调函数
     if (mask & AE_READABLE) fe->rfileProc = proc;
     if (mask & AE_WRITABLE) fe->wfileProc = proc;
     fe->clientData = clientData;
     if (fd > eventLoop->maxfd)
-        eventLoop->maxfd = fd;
+        eventLoop->maxfd = fd; // 更新事件循环结构体中当前已注册的最大文件描述符
     return AE_OK;
 }
 
@@ -328,8 +342,10 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
             int retval;
 
             id = te->id;
+            // 处理到期的定时事件
             retval = te->timeProc(eventLoop, id, te->clientData);
             processed++;
+            // 重设定时事件的到期时间
             if (retval != AE_NOMORE) {
                 aeAddMillisecondsToNow(retval,&te->when_sec,&te->when_ms);
             } else {
@@ -355,6 +371,9 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
  * the events that's possible to process without to wait are processed.
  *
  * The function returns the number of events processed. */
+// 事件处理主函数, 第二个参数是一个标志位:
+// - AE_ALL_EVENTS 表示函数需要处理文件事件(socket 事件)与时间事件
+// - AE_CALL_AFTER_SLEEP 表示阻塞等待文件事件之后需要执行 aftersleep 函数
 int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 {
     int processed = 0, numevents;
@@ -408,6 +427,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 
         /* Call the multiplexing API, will return only on timeout or when
          * some event fires. */
+        // 阻塞等待文件事件发生
         numevents = aeApiPoll(eventLoop, tvp);
 
         /* After sleep callback. */
@@ -465,6 +485,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         }
     }
     /* Check time events */
+    // 处理时间事件
     if (flags & AE_TIME_EVENTS)
         processed += processTimeEvents(eventLoop);
 
@@ -495,9 +516,13 @@ int aeWait(int fd, int mask, long long milliseconds) {
 
 void aeMain(aeEventLoop *eventLoop) {
     eventLoop->stop = 0;
-    while (!eventLoop->stop) {
+    while (!eventLoop->stop) { // 开始事件循环
         if (eventLoop->beforesleep != NULL)
+            // beforesleep 在每次事件循环前执行, 即 Redis 阻塞等待文件事件前执行.
+            // beforesleep 会执行一些不是很费时的任务, 如 集群相关操作、过期键删除(快速过期键删除)、
+            // 向客户端返回命令回复等
             eventLoop->beforesleep(eventLoop);
+        // 事件循环处理主函数
         aeProcessEvents(eventLoop, AE_ALL_EVENTS|AE_CALL_AFTER_SLEEP);
     }
 }

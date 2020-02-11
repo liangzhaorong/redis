@@ -107,13 +107,14 @@ static void _dictReset(dictht *ht)
     ht->used = 0;
 }
 
-/* Create a new hash table */
+/* 创建一个新的 Hash 表
+ * PS: 在 redis-server 启动中, 整个数据库会先初始化一个空的字典用于存储整个数据库的键值对 */
 dict *dictCreate(dictType *type,
         void *privDataPtr)
 {
-    dict *d = zmalloc(sizeof(*d));
+    dict *d = zmalloc(sizeof(*d)); // 96byte
 
-    _dictInit(d,type,privDataPtr);
+    _dictInit(d,type,privDataPtr); // 结构体初始化
     return d;
 }
 
@@ -132,15 +133,16 @@ int _dictInit(dict *d, dictType *type,
 
 /* Resize the table to the minimal size that contains all the elements,
  * but with the invariant of a USED/BUCKETS ratio near to <= 1 */
+// 缩容函数
 int dictResize(dict *d)
 {
     int minimal;
 
     if (!dict_can_resize || dictIsRehashing(d)) return DICT_ERR;
     minimal = d->ht[0].used;
-    if (minimal < DICT_HT_INITIAL_SIZE)
+    if (minimal < DICT_HT_INITIAL_SIZE) // 容量最小值为 4
         minimal = DICT_HT_INITIAL_SIZE;
-    return dictExpand(d, minimal);
+    return dictExpand(d, minimal); // 调用扩容函数, 实质进行的是缩容
 }
 
 /* Expand or create the hash table */
@@ -152,7 +154,7 @@ int dictExpand(dict *d, unsigned long size)
         return DICT_ERR;
 
     dictht n; /* the new hash table */
-    unsigned long realsize = _dictNextPower(size);
+    unsigned long realsize = _dictNextPower(size); // 重新计算扩容后的值, 必须为 2 的 N 次方幂
 
     /* Rehashing to the same table size is not useful. */
     if (realsize == d->ht[0].size) return DICT_ERR;
@@ -171,8 +173,8 @@ int dictExpand(dict *d, unsigned long size)
     }
 
     /* Prepare a second hash table for incremental rehashing */
-    d->ht[1] = n;
-    d->rehashidx = 0;
+    d->ht[1] = n;     // 扩容后的新内存放入 ht[1] 中
+    d->rehashidx = 0; // 非默认的 -1, 表示需要进行 rehash
     return DICT_OK;
 }
 
@@ -261,13 +263,14 @@ static void _dictRehashStep(dict *d) {
     if (d->iterators == 0) dictRehash(d,1);
 }
 
-/* Add an element to the target hash table */
+/* 添加一个键值对到 hash 表中(调用该函数前会查找 key 是否存在, 不存在才调用该函数) */
 int dictAdd(dict *d, void *key, void *val)
 {
+    // 添加键, 字典中键已存在则返回 NULL, 否则添加键至新节点中, 返回新节点
     dictEntry *entry = dictAddRaw(d,key,NULL);
 
-    if (!entry) return DICT_ERR;
-    dictSetVal(d, entry, val);
+    if (!entry) return DICT_ERR; // 键存在则返回错误
+    dictSetVal(d, entry, val);   // 设置值, 更新 val 字段
     return DICT_OK;
 }
 
@@ -295,10 +298,13 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
     dictEntry *entry;
     dictht *ht;
 
+    // 该字典是否正在进行 rehash 操作, 是则执行一次 rehash
     if (dictIsRehashing(d)) _dictRehashStep(d);
 
     /* Get the index of the new element, or -1 if
      * the element already exists. */
+    // 查找键, 找到则直接返回 -1, 并把老节点存入 existing 字段中, 否则把新节点的索引值返回.
+    // 如果遇到 Hash 表容量不足, 则进行扩容
     if ((index = _dictKeyIndex(d, key, dictHashKey(d,key), existing)) == -1)
         return NULL;
 
@@ -306,10 +312,12 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
      * Insert the element in top, with the assumption that in a database
      * system it is more likely that recently added entries are accessed
      * more frequently. */
+    // 是否正在进行 rehash 操作中, 是则插入至散列表 ht[1] 中, 否则插入散列表 ht[0]
     ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
+    // 申请新节点内存, 插入散列表中, 给新节点存入键信息
     entry = zmalloc(sizeof(*entry));
     entry->next = ht->table[index];
-    ht->table[index] = entry;
+    ht->table[index] = entry; // 将新节点存入 index 指定的位置中
     ht->used++;
 
     /* Set the hash entry fields. */
@@ -366,16 +374,17 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
     dictEntry *he, *prevHe;
     int table;
 
+    // 检测 Hash 表是否为空
     if (d->ht[0].used == 0 && d->ht[1].used == 0) return NULL;
 
-    if (dictIsRehashing(d)) _dictRehashStep(d);
-    h = dictHashKey(d, key);
+    if (dictIsRehashing(d)) _dictRehashStep(d); // 如正在进行 rehash, 则执行一次 rehash 操作
+    h = dictHashKey(d, key); // 根据 key 获取对应的 Hash 值
 
-    for (table = 0; table <= 1; table++) {
-        idx = h & d->ht[table].sizemask;
-        he = d->ht[table].table[idx];
+    for (table = 0; table <= 1; table++) { // 遍历 Hash 表中的 ht[0] 和 ht[1]
+        idx = h & d->ht[table].sizemask; // 根据 Hash 值获取对应的索引值
+        he = d->ht[table].table[idx]; // 根据索引值获取对应的节点
         prevHe = NULL;
-        while(he) {
+        while(he) { // 把该节点从单链表中移除
             if (key==he->key || dictCompareKeys(d, key, he->key)) {
                 /* Unlink the element from the list */
                 if (prevHe)
@@ -387,7 +396,7 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
                     dictFreeVal(d, he);
                     zfree(he);
                 }
-                d->ht[table].used--;
+                d->ht[table].used--; // 给对应的 Hash 表的 used 字典减 1 操作
                 return he;
             }
             prevHe = he;
@@ -400,6 +409,7 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
 
 /* Remove an element, returning DICT_OK on success or DICT_ERR if the
  * element was not found. */
+// 删除字典中键对应的节点
 int dictDelete(dict *ht, const void *key) {
     return dictGenericDelete(ht,key,0) ? DICT_OK : DICT_ERR;
 }
@@ -473,23 +483,25 @@ void dictRelease(dict *d)
     zfree(d);
 }
 
+// dictFind 查找键值对
 dictEntry *dictFind(dict *d, const void *key)
 {
     dictEntry *he;
     uint64_t h, idx, table;
 
+    // 检测 Hash 表是否为空
     if (d->ht[0].used + d->ht[1].used == 0) return NULL; /* dict is empty */
     if (dictIsRehashing(d)) _dictRehashStep(d);
-    h = dictHashKey(d, key);
-    for (table = 0; table <= 1; table++) {
-        idx = h & d->ht[table].sizemask;
+    h = dictHashKey(d, key); // 得到键的 Hash 值
+    for (table = 0; table <= 1; table++) { // 遍历查找 Hash 表 ht[0] 和 ht[1]
+        idx = h & d->ht[table].sizemask; // 根据 Hash 值获取对应的索引值
         he = d->ht[table].table[idx];
-        while(he) {
+        while(he) { // 如果存在值则遍历该值中的单链表
             if (key==he->key || dictCompareKeys(d, key, he->key))
-                return he;
+                return he; // 找到与键相等的值, 返回该节点
             he = he->next;
         }
-        if (!dictIsRehashing(d)) return NULL;
+        if (!dictIsRehashing(d)) return NULL; // 如果未进行 rehash 操作, 则只读取 ht[0]
     }
     return NULL;
 }
@@ -539,6 +551,7 @@ long long dictFingerprint(dict *d) {
     return hash;
 }
 
+// dictGetIterator 初始化迭代器
 dictIterator *dictGetIterator(dict *d)
 {
     dictIterator *iter = zmalloc(sizeof(*iter));
@@ -552,6 +565,7 @@ dictIterator *dictGetIterator(dict *d)
     return iter;
 }
 
+// dictGetSafeIterator 初始化安全迭代器
 dictIterator *dictGetSafeIterator(dict *d) {
     dictIterator *i = dictGetIterator(d);
 
@@ -559,6 +573,7 @@ dictIterator *dictGetSafeIterator(dict *d) {
     return i;
 }
 
+// dictNext 通过迭代器获取下一个节点
 dictEntry *dictNext(dictIterator *iter)
 {
     while (1) {
@@ -594,6 +609,7 @@ dictEntry *dictNext(dictIterator *iter)
     return NULL;
 }
 
+// dictReleaseIterator 释放迭代器
 void dictReleaseIterator(dictIterator *iter)
 {
     if (!(iter->index == -1 && iter->table == 0)) {
@@ -835,6 +851,12 @@ static unsigned long rev(unsigned long v) {
  * 3) The reverse cursor is somewhat hard to understand at first, but this
  *    comment is supposed to help.
  */
+// d: 当前迭代的字典
+// v: 标识迭代开始的游标(即 Hash 表中数组索引), 每次遍历后会返回新的索引值, 整个遍历过程
+//    都是围绕这个游标值的改动进行, 来保证所有的数据能被遍历到
+// fn: 函数指针, 每遍历一个节点则调用该函数处理
+// bucketfn: 该函数在整理碎片时调用
+// privdata: 是回调函数 fn 所需参数
 unsigned long dictScan(dict *d,
                        unsigned long v,
                        dictScanFunction *fn,
@@ -970,7 +992,7 @@ static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **e
     if (_dictExpandIfNeeded(d) == DICT_ERR)
         return -1;
     for (table = 0; table <= 1; table++) {
-        idx = hash & d->ht[table].sizemask;
+        idx = hash & d->ht[table].sizemask; // 用键的 Hash 值与字典掩码值取与, 得到索引值
         /* Search if this slot does not already contain the given key */
         he = d->ht[table].table[idx];
         while(he) {

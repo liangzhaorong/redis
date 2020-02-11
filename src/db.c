@@ -43,9 +43,15 @@ int keyIsExpired(redisDb *db, robj *key);
 /* Update LFU when an object is accessed.
  * Firstly, decrement the counter if the decrement time is reached.
  * Then logarithmically increment the counter, and update the access time. */
+// 用于更新对象的上次访问时间与访问次数.
 void updateLFU(robj *val) {
+    // 注意 LFUDecrAndReturn 函数返回计数值 counter, 对象的访问次数在此值上累加. 为什么不直接
+    // 累加呢? 因为假设每次只是简单的对访问次数累加, 那么越老的数据一般情况下访问次数越大, 即使
+    // 该对象可能很长时间已经没有访问, 相反新对象的访问次数通常会比较小, 显然这是不公平的. 因此
+    // 访问次数应该有一个随时间衰减的过程, 函数 LFUDecrAndReturn 实现了此衰减功能.
     unsigned long counter = LFUDecrAndReturn(val);
     counter = LFULogIncr(counter);
+    // lru 的低 8bit 存储的是对象的访问次数, 高 16bit 存储的是对象的上次访问时间, 以分钟为单位
     val->lru = (LFUGetTimeInMinutes()<<8) | counter;
 }
 
@@ -186,23 +192,24 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
  * This function does not modify the expire time of the existing key.
  *
  * The program is aborted if the key was not already present. */
+// Server 收到 set 命令后, 会查询键是否已存在数据库中, 存在则最终会执行 dbOverwrite 函数
 void dbOverwrite(redisDb *db, robj *key, robj *val) {
-    dictEntry *de = dictFind(db->dict,key->ptr);
+    dictEntry *de = dictFind(db->dict,key->ptr); // 查找键存在与否, 返回存在的节点
 
-    serverAssertWithInfo(NULL,key,de != NULL);
+    serverAssertWithInfo(NULL,key,de != NULL); // 不存在则中断执行
     dictEntry auxentry = *de;
-    robj *old = dictGetVal(de);
+    robj *old = dictGetVal(de); // 获取老节点的 val 字段值
     if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
         val->lru = old->lru;
     }
-    dictSetVal(db->dict, de, val);
+    dictSetVal(db->dict, de, val); // 给节点设置新的值
 
     if (server.lazyfree_lazy_server_del) {
         freeObjAsync(old);
         dictSetVal(db->dict, &auxentry, NULL);
     }
 
-    dictFreeVal(db->dict, &auxentry);
+    dictFreeVal(db->dict, &auxentry); // 释放节点中旧 val 内存
 }
 
 /* High level Set operation. This function can be used in order to set

@@ -88,6 +88,7 @@ struct __attribute__ ((__packed__)) sdshdr64 {
 #define SDS_TYPE_64 4
 #define SDS_TYPE_MASK 7
 #define SDS_TYPE_BITS 3
+// s 指向 sds.buf, 这里是获取 sds 结构体的首地址
 #define SDS_HDR_VAR(T,s) struct sdshdr##T *sh = (void*)((s)-(sizeof(struct sdshdr##T)));
 #define SDS_HDR(T,s) ((struct sdshdr##T *)((s)-(sizeof(struct sdshdr##T))))
 #define SDS_TYPE_5_LEN(f) ((f)>>SDS_TYPE_BITS)
@@ -109,9 +110,10 @@ static inline size_t sdslen(const sds s) {
     return 0;
 }
 
+// 返回 sds 中剩余的容量
 static inline size_t sdsavail(const sds s) {
-    unsigned char flags = s[-1];
-    switch(flags&SDS_TYPE_MASK) {
+    unsigned char flags = s[-1]; // 获取 sds.flags 的值
+    switch(flags&SDS_TYPE_MASK) { // 根据 flags 中低 3bit 存储的类型值, 返回对应 sds 中剩余的容量
         case SDS_TYPE_5: {
             return 0;
         }
@@ -135,10 +137,12 @@ static inline size_t sdsavail(const sds s) {
     return 0;
 }
 
+// 设置 sds.len 的值为 newlen
 static inline void sdssetlen(sds s, size_t newlen) {
-    unsigned char flags = s[-1];
+    unsigned char flags = s[-1]; // 获取 sds.flags
+    // 根据 flags 中低 3bit 指示的 sds 类型, 获取 buf 的计数值的首地址, 并重置为 0
     switch(flags&SDS_TYPE_MASK) {
-        case SDS_TYPE_5:
+        case SDS_TYPE_5: // 对于 sdshdr5, flags 中低 3bit 存储类型, 高 5bit 存储字符串的长度
             {
                 unsigned char *fp = ((unsigned char*)s)-1;
                 *fp = SDS_TYPE_5 | (newlen << SDS_TYPE_BITS);

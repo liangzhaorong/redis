@@ -41,7 +41,10 @@
 
 const char *SDS_NOINIT = "SDS_NOINIT";
 
+// sdsHdrSize: 根据字符串的类型返回该类型对应的 sds 结构体大小
+// sizeof: 获取数据在内存中所占用的存储空间, 以字节为单位
 static inline int sdsHdrSize(char type) {
+    // 低 3bit 表示类型
     switch(type&SDS_TYPE_MASK) {
         case SDS_TYPE_5:
             return sizeof(struct sdshdr5);
@@ -86,31 +89,41 @@ static inline char sdsReqType(size_t string_size) {
  * You can print the string with printf() as there is an implicit \0 at the
  * end of the string. However the string is binary safe and can contain
  * \0 characters in the middle, as the length is stored in the sds header. */
+/* 创建一个新的 sds 字符串, initlen 指定该字符串的长度, init 指针指向该字符串的内容.
+ * 如果 init 为 NULL 则初始化一个 0 字节的字符串.
+ * 如果 init 指向 SDS_NOINIT, 则缓冲区是没有被初始化的.
+ *
+ * 创建的字符串总是已 '\0' 终止.
+ */
 sds sdsnewlen(const void *init, size_t initlen) {
     void *sh;
     sds s;
+    // 根据传入的 initlen 所指定的字符串长度确定该字符串应创建的 sds 类型
     char type = sdsReqType(initlen);
     /* Empty strings are usually created in order to append. Use type 8
      * since type 5 is not good at this. */
+    // 创建空字符串时, SDS_TYPE_5 被强制转换为 SDS_TYPE_8
     if (type == SDS_TYPE_5 && initlen == 0) type = SDS_TYPE_8;
-    int hdrlen = sdsHdrSize(type);
+    int hdrlen = sdsHdrSize(type); // 获取该类型对应的 sds 结构体大小
     unsigned char *fp; /* flags pointer. */
 
+    // 为该 sds 分配内存, hdrlen 为 sds 结构体大小, 
+    // initlen 为 sds.buf 的长度(即将要存储的字符串大小), 1 表示 buf 最后存储 '\0'
     sh = s_malloc(hdrlen+initlen+1);
-    if (init==SDS_NOINIT)
+    if (init==SDS_NOINIT) // 没有初始化字符串, 即 sds.buf 将为空
         init = NULL;
     else if (!init)
         memset(sh, 0, hdrlen+initlen+1);
-    if (sh == NULL) return NULL;
-    s = (char*)sh+hdrlen;
-    fp = ((unsigned char*)s)-1;
-    switch(type) {
-        case SDS_TYPE_5: {
+    if (sh == NULL) return NULL; // 返回 NULL 表示内存空间不足
+    s = (char*)sh+hdrlen;        // 指向 sds.buf 缓冲区
+    fp = ((unsigned char*)s)-1;  // 指向 flags
+    switch(type) {               // 根据类型初始化对应的 sds 结构体
+        case SDS_TYPE_5: { // flags: 低 3bit 存储类型, 高 5bit 存储长度(或预留)
             *fp = type | (initlen << SDS_TYPE_BITS);
             break;
         }
         case SDS_TYPE_8: {
-            SDS_HDR_VAR(8,s);
+            SDS_HDR_VAR(8,s); // 设置 sh 指向 sds 结构体的开头
             sh->len = initlen;
             sh->alloc = initlen;
             *fp = type;
@@ -138,32 +151,37 @@ sds sdsnewlen(const void *init, size_t initlen) {
             break;
         }
     }
-    if (initlen && init)
+    if (initlen && init) // 将 init 指向的内容拷贝到 s.buf 指向的缓冲区中
         memcpy(s, init, initlen);
-    s[initlen] = '\0';
-    return s;
+    s[initlen] = '\0'; // 字符串以 '\0' 结尾
+    return s; // 返回指向 sds 结构体中的 buf 字段的指针
 }
 
 /* Create an empty (zero length) sds string. Even in this case the string
  * always has an implicit null term. */
+// 创建一个空字符串(实际创建的结构体为 sdshdr8)
 sds sdsempty(void) {
     return sdsnewlen("",0);
 }
 
 /* Create a new sds string starting from a null terminated C string. */
+// 创建一个以 '\0' 结尾的字符串
 sds sdsnew(const char *init) {
     size_t initlen = (init == NULL) ? 0 : strlen(init);
     return sdsnewlen(init, initlen);
 }
 
 /* Duplicate an sds string. */
+// 返回 s 的副本
 sds sdsdup(const sds s) {
     return sdsnewlen(s, sdslen(s));
 }
 
 /* Free an sds string. No operation is performed if 's' is NULL. */
+// 释放 sds 字符串.
 void sdsfree(sds s) {
     if (s == NULL) return;
+    // s 指向 sds.buf, 这里通过对 s 的偏移, 定位到 sds 结构体的首地址, 然后调用 s_free 释放内存
     s_free((char*)s-sdsHdrSize(s[-1]));
 }
 
@@ -190,6 +208,7 @@ void sdsupdatelen(sds s) {
  * However all the existing buffer is not discarded but set as free space
  * so that next append operations will not require allocations up to the
  * number of bytes previously available. */
+// 
 void sdsclear(sds s) {
     sdssetlen(s, 0);
     s[0] = '\0';

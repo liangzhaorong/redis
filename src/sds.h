@@ -42,7 +42,8 @@ const char *SDS_NOINIT;
 
 typedef char *sds;
 
-/* 通常结构体会按其所有变量大小的最小公倍数做字节对齐, 而用 packed 修饰后,
+/* __attribute__ ((__packed__)):
+ * 通常结构体会按其所有变量大小的最小公倍数做字节对齐, 而用 packed 修饰后,
  * 结构体则变为按 1 字节对齐. 以 sdshdr32 为例, 修饰前按 4 字节对齐大小为
  * 12(4*3) 字节; 修饰后按 1 字节对齐, 注意 buf 是个 char 类型的柔性数组,
  * 地址连续, 始终在 flags 之后.
@@ -50,6 +51,7 @@ typedef char *sds;
 
 /* Note: sdshdr5 is never used, we just access the flags byte directly.
  * However is here to document the layout of type 5 SDS strings. */
+// 注意: sdshdr5 从未使用, 仅是直接访问 flags 字节.
 struct __attribute__ ((__packed__)) sdshdr5 {
     unsigned char flags; /* 低 3bit 存储类型, 高 5bit 存储长度 */
     char buf[];          /* 柔性数组, 存放实际内容 */

@@ -246,12 +246,13 @@ robj *createHashObject(void) {
     return o;
 }
 
+// 创建有序集合对象
 robj *createZsetObject(void) {
     zset *zs = zmalloc(sizeof(*zs));
     robj *o;
 
-    zs->dict = dictCreate(&zsetDictType,NULL);
-    zs->zsl = zslCreate();
+    zs->dict = dictCreate(&zsetDictType,NULL); // 创建字典
+    zs->zsl = zslCreate();                     // 创建跳跃表
     o = createObject(OBJ_ZSET,zs);
     o->encoding = OBJ_ENCODING_SKIPLIST;
     return o;

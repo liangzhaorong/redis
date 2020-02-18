@@ -179,6 +179,28 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* Redis 使用字节数组表示一个压缩列表, 压缩列表结构示意如下:
+ *   <zlbytes> <zltail> <zllen> <entry> <entry> ... <entry> <zlend>
+ * 
+ * - zlbytes: 压缩列表的字节长度, 占 4bytes, 因此压缩列表最多有 2^32 - 1 个字节
+ * - zltail: 压缩列表尾元素相对于压缩列表起始地址的偏移量, 占 4 个字节
+ * - zllen: 压缩列表的元素个数, 占 2bytes. zllen 无法存储元素个数超过 65535(2^16 - 1) 的压缩列表,
+ *   必须遍历整个压缩列表才能获取到元素个数.
+ * - entryX: 压缩列表存储的元素, 可以是字节数组或者整数, 长度不限.
+ * - zlend: 压缩列表的结尾, 占 1byte, 恒为 0xFF.
+ *
+ *
+ * 压缩列表元素的编码结构:
+ *   <prevlen> <encoding> <content>
+ *
+ * - prevlen: 表示前一个元素的字节长度, 占 1 个或者 5 个字节, 当前一个元素的长度小于 254 字节时,
+ *   用 1 个字节表示; 当前一个元素的长度大于或等于 254 字节时, 用 5 个字节表示. 而此时 prevlen
+ *   字段的第 1 个字节是固定的 0xFE, 后面 4 个字节才真正表示前一个元素的长度. 假设已知当前元素的
+ *   首地址为 p, 那么 p-prevlen 就是前一个元素的首地址, 从而实现压缩列表从尾到头的遍历.
+ * - encoding: 表示当前元素的编码, 即 content 字段存储的数据类型(整数或字节数组), 数据内容存储在
+ *   content 字段. 为了节约内存, encoding 字段同样长度可变.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -269,22 +291,30 @@
 /* We use this function to receive information about a ziplist entry.
  * Note that this is not how the data is actually encoded, is just what we
  * get filled by a function in order to operate more easily. */
+// 压缩列表元素的编码结构: <prevlen> <encoding> <content>
 typedef struct zlentry {
+    // prevlen 字段的长度
     unsigned int prevrawlensize; /* Bytes used to encode the previous entry len*/
+    // prevlen 字段存储的内容(即前一个元素的字节长度)
     unsigned int prevrawlen;     /* Previous entry len. */
+    // encoding 字段的长度
     unsigned int lensize;        /* Bytes used to encode this entry type/len.
                                     For example strings have a 1, 2 or 5 bytes
                                     header. Integers always use a single byte.*/
+    // encoding 字段的内容(即元素数据内容的长度)
     unsigned int len;            /* Bytes used to represent the actual entry.
                                     For strings this is just the string length
                                     while for integers it is 1, 2, 3, 4, 8 or
                                     0 (for 4 bit immediate) depending on the
                                     number range. */
+    // 表示当前元素的首部长度, 即 prevlen 字段长度与 encoding 字段长度之和
     unsigned int headersize;     /* prevrawlensize + lensize. */
+    // 数据类型: 字节数组或整数
     unsigned char encoding;      /* Set to ZIP_STR_* or ZIP_INT_* depending on
                                     the entry encoding. However for 4 bits
                                     immediate integers this can assume a range
                                     of values and must be range-checked. */
+    // 当前元素首地址
     unsigned char *p;            /* Pointer to the very start of the entry, that
                                     is, this points to prev-entry-len field. */
 } zlentry;
@@ -304,6 +334,7 @@ typedef struct zlentry {
 } while(0)
 
 /* Return bytes needed to store integer encoded by 'encoding'. */
+// 对于字节数组只根据 encoding 的前 2bit 即可判断类型, 而判断整数类型需要 encoding 的前 4bit
 unsigned int zipIntSize(unsigned char encoding) {
     switch(encoding) {
     case ZIP_INT_8B:  return 1;
@@ -312,6 +343,7 @@ unsigned int zipIntSize(unsigned char encoding) {
     case ZIP_INT_32B: return 4;
     case ZIP_INT_64B: return 8;
     }
+    // 0~12 立即数
     if (encoding >= ZIP_INT_IMM_MIN && encoding <= ZIP_INT_IMM_MAX)
         return 0; /* 4 bit immediate */
     panic("Invalid integer encoding 0x%02X", encoding);
@@ -569,9 +601,10 @@ int64_t zipLoadInteger(unsigned char *p, unsigned char encoding) {
 /* zipEntry 用来解码压缩列表的元素, 存储于 zlentry 结构体 */
 void zipEntry(unsigned char *p, zlentry *e) {
 
-    // 解码 previous_entry_length 字段, 此时参数 p 指向元素首地址
+    // 解码 prevlen 字段, 此时参数 p 指向元素首地址
     ZIP_DECODE_PREVLEN(p, e->prevrawlensize, e->prevrawlen);
-    // 解码 encoding 字段, 此时首参的结果指向元素首地址偏移 previous_entry_length 字段长度的位置
+    // 解码 encoding 字段, e->prevrawlensize 的值即为 prevlen 字段的长度,
+    // 因此 p + e->prevrawlensize 即指向 encoding 字段的首地址
     ZIP_DECODE_LENGTH(p + e->prevrawlensize, e->encoding, e->lensize, e->len);
     e->headersize = e->prevrawlensize + e->lensize;
     e->p = p;

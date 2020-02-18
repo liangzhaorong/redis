@@ -871,7 +871,7 @@ struct sharedObjectsStruct {
 // zskiplistNode 跳跃表节点
 /* ZSETs use a specialized version of Skiplists */
 typedef struct zskiplistNode {
-    sds ele; // 用于存储字符串类型的数据
+    sds ele;      // 用于存储字符串类型的数据
     double score; // 用于存储排序的分值
     // 后退指针, 只能指向当前节点最底层的前一个节点, 头节点和第一个节点--backward 指向
     // NULL, 从后向前遍历跳跃表时使用.
@@ -897,9 +897,10 @@ typedef struct zskiplist {
     // tail: 指向跳跃表尾节点
     struct zskiplistNode *header, *tail;
     unsigned long length; // 跳跃表长度, 表示除头结点外的节点个数
-    int level; // 跳跃表的高度
+    int level;            // 跳跃表的高度
 } zskiplist;
 
+// zset 有序集合内部使用字典和跳跃表实现
 typedef struct zset {
     dict *dict;
     zskiplist *zsl;
@@ -1316,8 +1317,8 @@ struct redisServer {
     size_t hash_max_ziplist_entries;
     size_t hash_max_ziplist_value;
     size_t set_max_intset_entries;
-    size_t zset_max_ziplist_entries;
-    size_t zset_max_ziplist_value;
+    size_t zset_max_ziplist_entries; // zset 采用压缩列表时, 元素个数最大值. 默认 128
+    size_t zset_max_ziplist_value;   // zset 采用压缩列表时, 每个元素的字符串长度最大值. 默认 64
     size_t hll_sparse_max_bytes;
     size_t stream_node_max_bytes;
     int64_t stream_node_max_entries;

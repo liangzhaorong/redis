@@ -76,12 +76,14 @@ zskiplistNode *zslCreateNode(int level, double score, sds ele) {
     // zskiplistLevel 的内存大小之和
     zskiplistNode *zn =
         zmalloc(sizeof(*zn)+level*sizeof(struct zskiplistLevel));
+    // 初始化节点变量
     zn->score = score;
     zn->ele = ele;
     return zn;
 }
 
 /* Create a new skiplist. */
+// 创建一个新的跳跃表
 zskiplist *zslCreate(void) {
     int j;
     zskiplist *zsl;
@@ -91,9 +93,9 @@ zskiplist *zslCreate(void) {
     // 跳跃表层高初始化为 1, 长度初始化为 0
     zsl->level = 1;
     zsl->length = 0;
-    // 将 zsl 的头结点指针指向新创建的头结点
+    // 将跳跃表 zsl 的头结点指针指向新创建的头结点
     zsl->header = zslCreateNode(ZSKIPLIST_MAXLEVEL,0,NULL);
-    // 头节点是一个特殊的节点, 不存储有序集合的 member 信息. 头结点是跳跃表
+    // 跳跃表头节点是一个特殊的节点, 不存储有序集合的 member 信息. 头结点是跳跃表
     // 中第一个插入的节点, 其 level 数组的每项 forward 都为 NULL, span 值都为 0
     for (j = 0; j < ZSKIPLIST_MAXLEVEL; j++) {
         zsl->header->level[j].forward = NULL;
@@ -152,11 +154,11 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
     // 的 span 和设置新插入节点的 span 时用到
     unsigned int rank[ZSKIPLIST_MAXLEVEL];
     int i, level;
-
-    // 查找节点插入的位置
+    
     serverAssert(!isnan(score));
-    x = zsl->header;
-    for (i = zsl->level-1; i >= 0; i--) {
+    // 查找节点插入的位置
+    x = zsl->header; // 指向跳跃表头节点
+    for (i = zsl->level-1; i >= 0; i--) { // 从最高层逐个向底层查找
         /* store rank that is crossed to reach the insert position */
         rank[i] = i == (zsl->level-1) ? 0 : rank[i+1];
         while (x->level[i].forward &&
@@ -173,9 +175,10 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
      * scores, reinserting the same element should never happen since the
      * caller of zslInsert() should test in the hash table if the element is
      * already inside or not. */
-    // 调整跳跃表高度
+    // 插入节点的高度是随机的, 假设要插入节点的高度为 3, 大于跳跃表的当前高度 2(假设),
+    // 所以需要调整跳跃表高度
     level = zslRandomLevel();
-    if (level > zsl->level) {
+    if (level > zsl->level) { // 若随机生成的高度大于当前跳跃表的高度
         for (i = zsl->level; i < level; i++) {
             rank[i] = 0;
             update[i] = zsl->header;
@@ -1381,6 +1384,13 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
             /* Optimize: check if the element is too large or the list
              * becomes too long *before* executing zzlInsert. */
             zobj->ptr = zzlInsert(zobj->ptr,ele,score);
+            // 一般情况下, 不会将 zset-max-ziplist-entries 配置成 0, 元素的字符串长度也不会太长,
+            // 所以在创建有序集合时, 默认使用压缩列表的底层实现. zset 新插入元素时, 会判断以下
+            // 两种条件:
+            //   - zset 中元素个数大于 zset_max_ziplist_entries
+            //   - 插入元素的字符串长度大于 zset_max_ziplist_value
+            // 当满足任一条件时, Redis 便会将 zset 的底层实现由压缩列表转为跳跃表.
+            // 注意: zset 在转为跳跃表后, 即使元素被逐渐删除, 也不会重新转为压缩列表.
             if (zzlLength(zobj->ptr) > server.zset_max_ziplist_entries ||
                 sdslen(ele) > server.zset_max_ziplist_value)
                 zsetConvert(zobj,OBJ_ENCODING_SKIPLIST);
@@ -1623,6 +1633,8 @@ void zaddGenericCommand(client *c, int flags) {
     zobj = lookupKeyWrite(c->db,key);
     if (zobj == NULL) {
         if (xx) goto reply_to_client; /* No key + XX option: nothing to do. */
+        // 一般情况下, 不会将 zset-max-ziplist-entries 配置成 0, 元素的字符串长度也不会太长,
+        // 所以在创建有序集合时, 默认使用压缩列表的底层实现.
         if (server.zset_max_ziplist_entries == 0 ||
             server.zset_max_ziplist_value < sdslen(c->argv[scoreidx+1]->ptr))
         {

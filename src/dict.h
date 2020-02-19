@@ -58,7 +58,7 @@ typedef struct dictEntry {
 
 // dictType 包含对字典进行操作的函数指针
 typedef struct dictType {
-    uint64_t (*hashFunction)(const void *key);  // 该字典对应的 Hash 函数
+    uint64_t (*hashFunction)(const void *key);        // 该字典对应的 Hash 函数
     void *(*keyDup)(void *privdata, const void *key); // 键对应的复制函数
     void *(*valDup)(void *privdata, const void *obj); // 值对应的复制函数
     int (*keyCompare)(void *privdata, const void *key1, const void *key2); // 键的对比函数
@@ -74,7 +74,7 @@ typedef struct dictType {
 typedef struct dictht {
     dictEntry **table;      // 指针数组, 用于存储键值对
     unsigned long size;     // table 数组的大小
-    unsigned long sizemask; // 掩码 = size - 1, 用于计算键的索引值
+    unsigned long sizemask; // 掩码 = size - 1, 用于计算键的索引值(因为索引值是键 Hash 值与数组总容量取余后的值)
     unsigned long used;     // table 数组已存元素个数, 包含 next 单链表的数据
 } dictht;
 
@@ -85,6 +85,7 @@ typedef struct dictht {
 typedef struct dict {
     dictType *type;  // 该字典对应的特定操作函数
     void *privdata;  // 该字典依赖的数据, 配合 type 字段指向的函数一起使用
+    // 通常使用 ht[0], 只有当该字典扩容、缩容需要进行 rehash 时, 才会用到 ht[1]
     dictht ht[2];    // Hash 表, 键值对存储在此
     // rehash 标识. 默认值为 -1, 代表没进行 rehash 操作; 不为 -1 时, 代表正进行
     // rehash 操作, 存储的值表示 Hash 表 ht[0] 的 rehash 操作进行到了哪个索引值

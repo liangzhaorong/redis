@@ -199,7 +199,7 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
     serverAssertWithInfo(NULL,key,de != NULL); // 不存在则中断执行
     dictEntry auxentry = *de;
     robj *old = dictGetVal(de); // 获取老节点的 val 字段值
-    if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
+    if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) { // 内存淘汰策略为 LFU
         val->lru = old->lru;
     }
     dictSetVal(db->dict, de, val); // 给节点设置新的值
@@ -221,9 +221,10 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
  *
  * All the new keys in the database should be created via this interface. */
 void setKey(redisDb *db, robj *key, robj *val) {
+    // 查找该 key 指定的键是否存在, 若不存在则添加
     if (lookupKeyWrite(db,key) == NULL) {
         dbAdd(db,key,val);
-    } else {
+    } else { // 存在则执行修改
         dbOverwrite(db,key,val);
     }
     incrRefCount(val);

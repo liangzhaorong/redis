@@ -727,11 +727,12 @@ dictType replScriptCacheDictType = {
     NULL                        /* val destructor */
 };
 
+// 检测当前 dict 中的使用量是否小于总容量的 10%, 若是则返回 1
 int htNeedsResize(dict *dict) {
     long long size, used;
 
-    size = dictSlots(dict);
-    used = dictSize(dict);
+    size = dictSlots(dict); // dict(ht[0] 和 ht[1]) 的总容量
+    used = dictSize(dict);  // dict(ht[0] 和 ht[1]) 中已使用量
     return (size > DICT_HT_INITIAL_SIZE &&
             (used*100/size < HASHTABLE_MIN_FILL));
 }

@@ -37,7 +37,7 @@
 // 
 // 在两种情况下, 底层编码会从 intset 转变为 hashtable.
 // - 一种情况为当元素个数超过一定数量后(默认值为 512), 即使元素类型仍然是整型, 也会将编码
-//   转换为 hashtable, 该值由 ''set-max-intset-entries 512' 配置项决定.
+//   转换为 hashtable, 该值由 'set-max-intset-entries 512' 配置项决定.
 // - 另一种情况是当增加非整型变量时, 如在集合中增加元素 'a' 后, 会将集合的底层编码从
 // - intset 转换为 hashtable.
 //

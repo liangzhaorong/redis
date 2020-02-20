@@ -73,10 +73,12 @@ static int _dictInit(dict *ht, dictType *type, void *privDataPtr);
 
 static uint8_t dict_hash_function_seed[16];
 
+// 设置新的散列种子
 void dictSetHashFunctionSeed(uint8_t *seed) {
     memcpy(dict_hash_function_seed,seed,sizeof(dict_hash_function_seed));
 }
 
+// 获取当前散列种子值
 uint8_t *dictGetHashFunctionSeed(void) {
     return dict_hash_function_seed;
 }
@@ -347,17 +349,20 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
  * Return 1 if the key was added from scratch, 0 if there was already an
  * element with such key and dictReplace() just performed a value update
  * operation. */
+// 添加键值对, 若存在则修改, 否则添加
 int dictReplace(dict *d, void *key, void *val)
 {
     dictEntry *entry, *existing, auxentry;
 
     /* Try to add the element. If the key
      * does not exists dictAdd will succeed. */
+    // 添加或查找键, 添加成功返回新节点, 查找成功返回 NULL 并把老节点存入 existing 字段
     entry = dictAddRaw(d,key,&existing);
-    if (entry) {
-        dictSetVal(d, entry, val);
+    if (entry) { // 若添加新节点
+        dictSetVal(d, entry, val); // 为该新节点设置值
         return 1;
     }
+    // 下面为修改旧节点的值
 
     /* Set the new value and free the old one. Note that it is important
      * to do that in this order, as the value may just be exactly the same
@@ -377,8 +382,10 @@ int dictReplace(dict *d, void *key, void *val)
  * existing key is returned.)
  *
  * See dictAddRaw() for more information. */
+// 添加或查找 key
 dictEntry *dictAddOrFind(dict *d, void *key) {
     dictEntry *entry, *existing;
+    // 添加或查找键, 添加成功返回新节点, 查找成功返回 NULL 并把老节点存入 existing 字段
     entry = dictAddRaw(d,key,&existing);
     return entry ? entry : existing;
 }
@@ -427,8 +434,9 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
 
 /* Remove an element, returning DICT_OK on success or DICT_ERR if the
  * element was not found. */
-// 删除字典中键对应的节点
+// 删除字典中键对应的节点, 同时释放内存
 int dictDelete(dict *ht, const void *key) {
+    // 第三个参数为 0 表示同时释放内存
     return dictGenericDelete(ht,key,0) ? DICT_OK : DICT_ERR;
 }
 
@@ -453,6 +461,7 @@ int dictDelete(dict *ht, const void *key) {
  * // Do something with entry
  * dictFreeUnlinkedEntry(entry); // <- This does not need to lookup again.
  */
+// 删除 key, 但不释放内存
 dictEntry *dictUnlink(dict *ht, const void *key) {
     return dictGenericDelete(ht,key,1);
 }
@@ -588,6 +597,7 @@ dictIterator *dictGetIterator(dict *d)
 dictIterator *dictGetSafeIterator(dict *d) {
     dictIterator *i = dictGetIterator(d);
 
+    // 安全迭代器, 当有字典绑定到该迭代器时, 会暂停 rehash 操作
     i->safe = 1;
     return i;
 }
@@ -598,24 +608,26 @@ dictEntry *dictNext(dictIterator *iter)
     while (1) {
         if (iter->entry == NULL) {
             dictht *ht = &iter->d->ht[iter->table];
+            // 若为首次进行迭代器, 则计算并设置如下值
             if (iter->index == -1 && iter->table == 0) {
-                if (iter->safe)
+                if (iter->safe) // 若该迭代器为安全迭代器, 则安全迭代器计数值加 1
                     iter->d->iterators++;
-                else
+                else // 否则为非安全迭代器, 则计算当前字典的指纹值, 当字典未发生改变时, 该值不变
                     iter->fingerprint = dictFingerprint(iter->d);
             }
             iter->index++;
-            if (iter->index >= (long) ht->size) {
+            if (iter->index >= (long) ht->size) { // 若迭代的索引值达到当前字典的容量上限
+                // 若当前正在执行 rehash 操作, 且迭代的hash表为 ht[0], 则继续迭代下一个表, 即 ht[1]
                 if (dictIsRehashing(iter->d) && iter->table == 0) {
                     iter->table++;
                     iter->index = 0;
                     ht = &iter->d->ht[1];
-                } else {
+                } else { // 否则退出迭代
                     break;
                 }
             }
-            iter->entry = ht->table[iter->index];
-        } else {
+            iter->entry = ht->table[iter->index]; // 获取 hash 表中的一个节点
+        } else { // 这里表示获取由冲突节点组成的单链表中的下一个节点
             iter->entry = iter->nextEntry;
         }
         if (iter->entry) {
@@ -632,16 +644,17 @@ dictEntry *dictNext(dictIterator *iter)
 void dictReleaseIterator(dictIterator *iter)
 {
     if (!(iter->index == -1 && iter->table == 0)) {
-        if (iter->safe)
+        if (iter->safe) // 若为安全迭代器, 则将安全迭代器计数值减 1
             iter->d->iterators--;
-        else
+        else // 普通迭代器下, 若迭代器中的字典发生了改变, 则输出异常
             assert(iter->fingerprint == dictFingerprint(iter->d));
     }
-    zfree(iter);
+    zfree(iter); // 释放迭代器所占内存
 }
 
 /* Return a random entry from the hash table. Useful to
  * implement randomized algorithms */
+// 随机得到一个键
 dictEntry *dictGetRandomKey(dict *d)
 {
     dictEntry *he, *orighe;
@@ -705,6 +718,7 @@ dictEntry *dictGetRandomKey(dict *d)
  * of continuous elements to run some kind of algorithm or to produce
  * statistics. However the function is much faster than dictGetRandomKey()
  * at producing N elements. */
+// 随机得到几个键
 unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
     unsigned long j; /* internal hash table id, 0 or 1. */
     unsigned long tables; /* 1 or 2 tables? */
@@ -870,12 +884,16 @@ static unsigned long rev(unsigned long v) {
  * 3) The reverse cursor is somewhat hard to understand at first, but this
  *    comment is supposed to help.
  */
-// d: 当前迭代的字典
-// v: 标识迭代开始的游标(即 Hash 表中数组索引), 每次遍历后会返回新的索引值, 整个遍历过程
-//    都是围绕这个游标值的改动进行, 来保证所有的数据能被遍历到
-// fn: 函数指针, 每遍历一个节点则调用该函数处理
-// bucketfn: 该函数在整理碎片时调用
-// privdata: 是回调函数 fn 所需参数
+// dictScan 间断遍历的实现. 如 hscan 命令迭代整个数据库中的 key, 及 zscan 命令迭代有序集合
+// 所有成员与值时, 都是通过 dictScan 来实现字典遍历的. dictScan 遍历字典过程中可以进行 rehash
+// 操作, 通过算法来保证所有的数据能被遍历到.
+// 参数: 
+// - d: 当前迭代的字典
+// - v: 标识迭代开始的游标(即 Hash 表中数组索引), 每次遍历后会返回新的索引值, 整个遍历过程
+//      都是围绕这个游标值的改动进行, 来保证所有的数据能被遍历到
+// - fn: 函数指针, 每遍历一个节点则调用该函数处理
+// - bucketfn: 该函数在整理碎片时调用
+// - privdata: 是回调函数 fn 所需参数
 unsigned long dictScan(dict *d,
                        unsigned long v,
                        dictScanFunction *fn,
@@ -886,21 +904,26 @@ unsigned long dictScan(dict *d,
     const dictEntry *de, *next;
     unsigned long m0, m1;
 
-    if (dictSize(d) == 0) return 0;
+    if (dictSize(d) == 0) return 0; // 当前字典为空, 返回
 
-    if (!dictIsRehashing(d)) {
+    if (!dictIsRehashing(d)) { // 当前没有在进行 rehash 操作
         t0 = &(d->ht[0]);
         m0 = t0->sizemask;
 
         /* Emit entries at cursor */
         if (bucketfn) bucketfn(privdata, &t0->table[v & m0]);
-        de = t0->table[v & m0];
-        while (de) {
+        de = t0->table[v & m0]; // 避免缩容后游标超出 Hash 表最大值
+        while (de) { // 循环遍历当前节点的单链表
             next = de->next;
-            fn(privdata, de);
+            fn(privdata, de); // 依次将节点中键值对存入 privdata 字段中的单链表
             de = next;
         }
 
+        // 整个迭代过程强依赖游标值 v 变量, 根据 v 找到当前需读取的 Hash 表元素, 然后
+        // 遍历该元素单链表上所有的键值对, 依次执行 fn 函数指针指向的函数, 对键值对进行
+        // 读取操作.
+        // 为了兼容迭代间隔期间可能发生了缩容与扩容操作, 每次迭代时都会对 v 变量(游标值)
+        // 进行修改, 以确保迭代出的数据无遗漏.
         /* Set unmasked bits so incrementing the reversed cursor
          * operates on the masked bits */
         v |= ~m0;
@@ -910,12 +933,12 @@ unsigned long dictScan(dict *d,
         v++;
         v = rev(v);
 
-    } else {
+    } else { // 当前正在进行 rehash 操作
         t0 = &d->ht[0];
         t1 = &d->ht[1];
 
         /* Make sure t0 is the smaller and t1 is the bigger table */
-        if (t0->size > t1->size) {
+        if (t0->size > t1->size) { // 找到两个散列表中的小表, t0 必须指向小表, t1 指向大表
             t0 = &d->ht[1];
             t1 = &d->ht[0];
         }
@@ -926,15 +949,15 @@ unsigned long dictScan(dict *d,
         /* Emit entries at cursor */
         if (bucketfn) bucketfn(privdata, &t0->table[v & m0]);
         de = t0->table[v & m0];
-        while (de) {
+        while (de) { // 迭代第一张小 Hash 表
             next = de->next;
-            fn(privdata, de);
+            fn(privdata, de); // 依次将节点中键值对存入 privdata 字段中的单链表
             de = next;
         }
 
         /* Iterate over indices in larger table that are the expansion
          * of the index pointed to by the cursor in the smaller table */
-        do {
+        do { // 迭代第二张大 Hash 表
             /* Emit entries at cursor */
             if (bucketfn) bucketfn(privdata, &t1->table[v & m1]);
             de = t1->table[v & m1];
@@ -946,9 +969,9 @@ unsigned long dictScan(dict *d,
 
             /* Increment the reverse cursor not covered by the smaller mask.*/
             v |= ~m1;
-            v = rev(v);
+            v = rev(v); // 二进制逆转
             v++;
-            v = rev(v);
+            v = rev(v); // 二进制逆转
 
             /* Continue while bits covered by mask difference is non-zero */
         } while (v & (m0 ^ m1));
@@ -1037,6 +1060,7 @@ static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **e
     return idx;
 }
 
+// 清空一个字典
 void dictEmpty(dict *d, void(callback)(void*)) {
     _dictClear(d,&d->ht[0],callback);
     _dictClear(d,&d->ht[1],callback);

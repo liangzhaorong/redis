@@ -99,8 +99,8 @@ typedef struct dict {
  * iterating. Otherwise it is a non safe iterator, and only dictNext()
  * should be called while iterating. */
 typedef struct dictIterator {
-    dict *d;         // 迭代的字典
-    long index;      // 当前迭代到 Hash 表中哪个索引值
+    dict *d;    // 迭代的字典
+    long index; // 当前迭代到 Hash 表中哪个索引值
     // table 用于表示当前正在迭代的 Hash 表, 即 ht[0] 与 ht[1];
     // safe 用于表示当前创建的是否为安全迭代器
     int table, safe;

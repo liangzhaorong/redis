@@ -706,6 +706,8 @@ void scanGenericCommand(client *c, robj *o, unsigned long cursor) {
          * COUNT, so if the hash table is in a pathological state (very
          * sparsely populated) we avoid to block too much time at the cost
          * of returning no or very few elements. */
+        // 假设执行 hscan 命令, 则 count 为 hscan 命令传入的 count 值, 代表获取数据个数.
+        // Hash 表处于病态时(如大部分的节点为空时), 最大迭代次数为 10*count
         long maxiterations = count*10;
 
         /* We pass two pointers to the callback: the list to which it will
@@ -714,6 +716,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long cursor) {
         privdata[0] = keys;
         privdata[1] = o;
         do {
+            // 迭代字典数据, cursor 字段初始值为 hscan 命令传入值, 代表迭代 Hash 数组的游标起点值
             cursor = dictScan(ht, cursor, scanCallback, NULL, privdata);
         } while (cursor &&
               maxiterations-- &&

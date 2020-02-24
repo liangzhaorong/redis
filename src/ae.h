@@ -96,30 +96,21 @@ typedef struct aeFiredEvent {
 
 /* State of an event based program: 事件循环结构体 */
 typedef struct aeEventLoop {
-    // 当前已注册的最大文件描述符
-    int maxfd;   /* highest file descriptor currently registered */
-    // 事件循环结构体中可跟踪的文件描述符的最大数量
-    int setsize; /* max number of file descriptors tracked */
-    // 记录最大的定时事件 id+1
-    long long timeEventNextId;
-    // 用于系统时间的矫正
-    time_t lastTime;     /* Used to detect system clock skew */
-    // 文件事件表, 存储已注册的文件事件(socket 的可读可写事件)
-    aeFileEvent *events; /* Registered events */
-    // 存储被触发的文件事件
-    aeFiredEvent *fired; /* Fired events */
-    // 定时事件表
-    aeTimeEvent *timeEventHead;
-    // 事件循环结束标志
-    int stop;
+    int maxfd;                  // 当前已注册的最大文件描述符
+    int setsize;                // 事件循环结构体中可跟踪的文件描述符的最大数量
+    long long timeEventNextId;  // 记录最大的定时事件 id+1
+    time_t lastTime;            // 用于系统时间的矫正
+    aeFileEvent *events;        // 文件事件表, 存储已注册的文件事件(socket 的可读可写事件)
+    aeFiredEvent *fired;        // 存储被触发的文件事件
+    aeTimeEvent *timeEventHead; // 定时事件表
+    int stop;                   // 事件循环结束标志
     // Redis 底层可以使用 4 种 I/O 多路复用模型(kqueu, epoll 等), apidata 是对这 
     // 4 种模型的进一步封装.
     void *apidata; /* This is used for polling API specific data */
     // Redis 服务器需要阻塞等待文件事件的发生, 进程阻塞之前会调用 beforesleep 函数,
     // 进程因为某种原因被唤醒后会调用 aftersleep 函数
     aeBeforeSleepProc *beforesleep;
-    // 新的循环后需要执行的操作
-    aeBeforeSleepProc *aftersleep;
+    aeBeforeSleepProc *aftersleep;  // 新的循环后需要执行的操作
 } aeEventLoop;
 
 /* Prototypes */

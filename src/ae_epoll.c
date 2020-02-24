@@ -46,6 +46,9 @@ static int aeApiCreate(aeEventLoop *eventLoop) {
         zfree(state);
         return -1;
     }
+    // 创建 epoll 专用的文件描述符, 输入参数用于通知内核程序期望注册的网络连接数目,
+    // 内核以此判断初始分配空间大小; 注意在 Linux 2.6.8 版本后, 内核动态分配空间,
+    // 此参数会被忽略. 执行成功返回 0, 失败返回 -1
     state->epfd = epoll_create(1024); /* 1024 is just a hint for the kernel */
     if (state->epfd == -1) {
         zfree(state->events);
@@ -107,10 +110,18 @@ static void aeApiDelEvent(aeEventLoop *eventLoop, int fd, int delmask) {
 }
 
 static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
-    // 获取 epoll 模型对应的 aeApiState 结构体对象
+    // 获取 epoll 模型对应的 aeApiState 结构体对象, apidata 指向 I/O 多路复用模型对象
     aeApiState *state = eventLoop->apidata;
     int retval, numevents = 0;
 
+    // epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
+    // - epfd: 函数 epoll_create 返回的 epoll 文件描述符
+    // - epoll_event: 作为输出参数使用, 用于回传已触发的事件数组
+    // - maxevents: 每次能处理的最大事件数目
+    // - timeout: epoll_wait 函数阻塞超时时间, 如果超过 timeout 时间还没有事件发生, 函数不再
+    //   阻塞直接返回; 当 timeout 等于 0 时函数直接返回, timeout 等于 -1 时函数会一直阻塞直到
+    //   有事件发生.
+    //
     // 阻塞等待事件的发生
     retval = epoll_wait(state->epfd,state->events,eventLoop->setsize,
             tvp ? (tvp->tv_sec*1000 + tvp->tv_usec/1000) : -1);
@@ -122,7 +133,7 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
             int mask = 0;
             struct epoll_event *e = state->events+j;
 
-            // 转换事件类型为 Redis 定义的
+            // 转换事件类型为 Redis 中对应的定义
             if (e->events & EPOLLIN) mask |= AE_READABLE;
             if (e->events & EPOLLOUT) mask |= AE_WRITABLE;
             if (e->events & EPOLLERR) mask |= AE_WRITABLE;

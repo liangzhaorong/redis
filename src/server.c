@@ -1701,6 +1701,8 @@ void initServerConfig(void) {
     server.commands = dictCreate(&commandTableDictType,NULL);
     server.orig_commands = dictCreate(&commandTableDictType,NULL);
     populateCommandTable(); // 初始化命令表, 执行命令表从数组到字典的转化, 同时解析 sflags 生成 flags
+    // 对于经常使用的命令, Redis 会在服务器初始化时将命令缓存在 redisServer 对象, 
+    // 以便使用时不需要每次都从 commands 字典中查找.
     server.delCommand = lookupCommandByCString("del");
     server.multiCommand = lookupCommandByCString("multi");
     server.lpushCommand = lookupCommandByCString("lpush");
@@ -2200,6 +2202,7 @@ void initServer(void) {
 
 /* Populates the Redis Command Table starting from the hard coded list
  * we have on top of redis.c file. */
+//
 // 当服务器接收到一条命令请求时, 需要从命令表中查找命令, 而 redisCommandTable 命令表是一个数组,
 // 意味着查询命令的时间复杂度为 O(N), 效率低下. 因此 Redis 在服务器初始化时, 会将 redisCommandTable
 // 转换为一个字典存储在 redisServer 对象的 commands 字段, key 为命令名称, value 为命令 
@@ -2207,14 +2210,14 @@ void initServer(void) {
 // populateCommandTable 函数实现了命令表从数组到字典的转化, 同时解析 sflags 生成 flags.
 void populateCommandTable(void) {
     int j;
-    int numcommands = sizeof(redisCommandTable)/sizeof(struct redisCommand);
+    int numcommands = sizeof(redisCommandTable)/sizeof(struct redisCommand); // 命令个数
 
     for (j = 0; j < numcommands; j++) {
         struct redisCommand *c = redisCommandTable+j;
-        char *f = c->sflags;
+        char *f = c->sflags; // 命令标志
         int retval1, retval2;
 
-        while(*f != '\0') {
+        while(*f != '\0') { // 解析命令标志 sflags, 设置命令的二进制标志 flags
             switch(*f) {
             case 'w': c->flags |= CMD_WRITE; break;
             case 'r': c->flags |= CMD_READONLY; break;
@@ -2234,6 +2237,7 @@ void populateCommandTable(void) {
             f++;
         }
 
+        // 将命令添加到 server.commands 散列表中, 命令的名称为 key, 命令结构体 redisCommand 为 value
         retval1 = dictAdd(server.commands, sdsnew(c->name), c);
         /* Populate an additional dictionary that will be unaffected
          * by rename-command statements in redis.conf. */

@@ -43,6 +43,7 @@ int keyIsExpired(redisDb *db, robj *key);
 /* Update LFU when an object is accessed.
  * Firstly, decrement the counter if the decrement time is reached.
  * Then logarithmically increment the counter, and update the access time. */
+//
 // 用于更新对象的上次访问时间与访问次数.
 void updateLFU(robj *val) {
     // 注意 LFUDecrAndReturn 函数返回计数值 counter, 对象的访问次数在此值上累加. 为什么不直接
@@ -70,9 +71,11 @@ robj *lookupKey(redisDb *db, robj *key, int flags) {
             server.aof_child_pid == -1 &&
             !(flags & LOOKUP_NOTOUCH))
         {
+            // 若缓存淘汰策略为 LFU, 则更新对象的 lru 字段, 该字段存储的是上次访问时间与访问次数
             if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
                 updateLFU(val);
             } else {
+                // 否则缓存淘汰策略为 LRU, 则 lru 存储的是对象访问时间
                 val->lru = LRU_CLOCK();
             }
         }

@@ -75,6 +75,7 @@ unsigned int getLRUClock(void) {
  * If the current resolution is lower than the frequency we refresh the
  * LRU clock (as it should be in production servers) we return the
  * precomputed value, otherwise we need to resort to a system call. */
+//
 // 获取当前时间, 注意此时间不是实时获取的, Redis 以 1 秒为周期执行系统调用获取精确
 // 时间, 缓存在全局变量 server.lruclock, LRU_CLOCK 函数获取的只是该缓存时间.
 unsigned int LRU_CLOCK(void) {

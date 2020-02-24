@@ -371,6 +371,7 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
  * the events that's possible to process without to wait are processed.
  *
  * The function returns the number of events processed. */
+//
 // 事件处理主函数, 第二个参数是一个标志位:
 // - AE_ALL_EVENTS 表示函数需要处理文件事件(socket 事件)与时间事件
 // - AE_CALL_AFTER_SLEEP 表示阻塞等待文件事件之后需要执行 aftersleep 函数

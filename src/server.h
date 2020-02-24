@@ -477,6 +477,10 @@ typedef long long mstime_t; /* millisecond time type. */
 
 /* A redis object, that is a type able to hold a string / list / set */
 
+// Redis 是一个 key-value 型数据库, key 只能是字符串, value 可以是字符串、列表、
+// 集合、有序集合和散列表, 这 5 种数据类型用结构体 robj 表示, 称之为 Redis 对象.
+// 结构体 robj 中的 type 字段表示对象类型. 5 种对象类型如下定义所示:
+
 /* The actual Redis Object */
 #define OBJ_STRING 0    /* String object. */
 #define OBJ_LIST 1      /* List object. */
@@ -629,8 +633,8 @@ typedef struct RedisModuleDigest {
 // 有序集合和散列表, 这 5 种数据类型用结构体 robj 表示, 称之为 Redis 对象.
 #define OBJ_SHARED_REFCOUNT INT_MAX
 typedef struct redisObject {
-    unsigned type:4;
-    unsigned encoding:4;
+    unsigned type:4;     // 对象类型, 字符串、列表、集合、有序集合、散列表等
+    unsigned encoding:4; // 表示当前对象底层存储采用的数据结构
     // lru 字段占 24bit, 用于实现缓存淘汰策略, 可以在配置文件中使用 maxmemory-policy 配置
     // 已用内存达到最大内存限制时的缓存淘汰策略. lru 根据用户配置的缓存淘汰策略存储不同数据,
     // 常用的策略就是 LRU 与 LFU. LRU 的核心思想是, 如果数据最近被访问过, 那么将来被访问的
@@ -666,6 +670,9 @@ struct evictionPoolEntry; /* Defined in evict.c */
 
 /* This structure is used in order to represent the output buffer of a client,
  * which is actually a linked list of blocks like that, that is: client->reply. */
+//
+// client->reply 链表中的节点存储的值类型为 clientReplyBlock. 
+// 如下可以看到链表节点本质上就是一个缓冲区(buffer).
 typedef struct clientReplyBlock {
     size_t size, used; // size 缓冲区总大小, used 表示缓冲区已使用空间大小
     char buf[];
@@ -765,6 +772,8 @@ typedef struct readyList {
 
 /* With multiplexing we need to take per-client state.
  * Clients are taken in a linked list. */
+//
+// client 存储客户端连接的所有信息.
 typedef struct client {
     // 客户端唯一 id, 通过全局变量 server.next_client_id 实现
     uint64_t id;            /* Client incremental unique ID. */
@@ -1015,6 +1024,7 @@ struct clusterState;
 #define CHILD_INFO_TYPE_RDB 0
 #define CHILD_INFO_TYPE_AOF 1
 
+// redisServer 存储 Redis 服务器的所有信息
 struct redisServer {
     /* General */
     pid_t pid;                  /* Main process pid. */
@@ -1095,6 +1105,8 @@ struct redisServer {
     time_t loading_start_time;
     off_t loading_process_events_interval_bytes;
     /* Fast pointers to often looked up command */
+    // 对于经常使用的命令, Redis 会在服务器初始化时将命令缓存在 redisServer 对象, 
+    // 以便使用时不需要每次都从 commands 字典中查找.
     struct redisCommand *delCommand, *multiCommand, *lpushCommand,
                         *lpopCommand, *rpopCommand, *zpopminCommand,
                         *zpopmaxCommand, *sremCommand, *execCommand,

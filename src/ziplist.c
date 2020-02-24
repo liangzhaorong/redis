@@ -453,6 +453,9 @@ unsigned int zipStorePrevEntryLength(unsigned char *p, unsigned int len) {
 
 /* Return the number of bytes used to encode the length of the previous
  * entry. The length is returned by setting the var 'prevlensize'. */
+// 压缩列表元素项结构中第一个字段为 prevlen, 即表示前一个元素的字节长度, 占 1 个或者 5 个字节.
+// 当前一个元素的长度小于 254 时, 用 1 个字节表示; 当前一个元素的长度大于或等于 254 字节时, 用
+// 5 个字节表示
 #define ZIP_DECODE_PREVLENSIZE(ptr, prevlensize) do {                          \
     if ((ptr)[0] < ZIP_BIG_PREVLEN) {                                          \
         (prevlensize) = 1;                                                     \
@@ -503,8 +506,8 @@ int zipPrevLenByteDiff(unsigned char *p, unsigned int len) {
 /* Return the total number of bytes used by the entry pointed to by 'p'. */
 unsigned int zipRawEntryLength(unsigned char *p) {
     unsigned int prevlensize, encoding, lensize, len;
-    ZIP_DECODE_PREVLENSIZE(p, prevlensize);
-    ZIP_DECODE_LENGTH(p + prevlensize, encoding, lensize, len);
+    ZIP_DECODE_PREVLENSIZE(p, prevlensize); // 获取当前元素中 prevlen 所占的字节数, 1 或 5
+    ZIP_DECODE_LENGTH(p + prevlensize, encoding, lensize, len); // 当前元素所占的字节数
     return prevlensize + lensize + len;
 }
 
@@ -1006,13 +1009,15 @@ unsigned char *ziplistPush(unsigned char *zl, unsigned char *s, unsigned int sle
 /* Returns an offset to use for iterating with ziplistNext. When the given
  * index is negative, the list is traversed back to front. When the list
  * doesn't contain an element at the provided index, NULL is returned. */
+// 获取压缩压缩列表 zl 中索引为 index 的元素, index 为正数则从头开始遍历, 为负数则从末尾开始遍历
 unsigned char *ziplistIndex(unsigned char *zl, int index) {
     unsigned char *p;
     unsigned int prevlensize, prevlen = 0;
-    if (index < 0) {
+    if (index < 0) { // 从后遍历压缩列表, 找到索引为 index 的元素项
         index = (-index)-1;
-        p = ZIPLIST_ENTRY_TAIL(zl);
-        if (p[0] != ZIP_END) {
+        p = ZIPLIST_ENTRY_TAIL(zl); // 获取压缩链表尾元素的首地址
+        if (p[0] != ZIP_END) {      // 压缩列表结尾标识默认为 oxFF
+            // 获取前一个元素的字节长度
             ZIP_DECODE_PREVLEN(p, prevlensize, prevlen);
             while (prevlen > 0 && index--) {
                 p -= prevlen;
@@ -1020,9 +1025,9 @@ unsigned char *ziplistIndex(unsigned char *zl, int index) {
             }
         }
     } else {
-        p = ZIPLIST_ENTRY_HEAD(zl);
-        while (p[0] != ZIP_END && index--) {
-            p += zipRawEntryLength(p);
+        p = ZIPLIST_ENTRY_HEAD(zl); // 获取压缩列表首元素地址
+        while (p[0] != ZIP_END && index--) { // 从头开始遍历压缩列表, 找到索引为 index 的元素项
+            p += zipRawEntryLength(p); // 前进一个元素所占的字节数
         }
     }
     return (p[0] == ZIP_END || index > 0) ? NULL : p;
@@ -1080,13 +1085,13 @@ unsigned int ziplistGet(unsigned char *p, unsigned char **sstr, unsigned int *sl
     if (p == NULL || p[0] == ZIP_END) return 0;
     if (sstr) *sstr = NULL;
 
-    zipEntry(p, &entry);
-    if (ZIP_IS_STR(entry.encoding)) {
+    zipEntry(p, &entry); // 解码当前压缩列表的元素
+    if (ZIP_IS_STR(entry.encoding)) { // 若当前元素存储的数据类型为字节数组
         if (sstr) {
             *slen = entry.len;
             *sstr = p+entry.headersize;
         }
-    } else {
+    } else { // 否则存储的是整数
         if (sval) {
             *sval = zipLoadInteger(p+entry.headersize,entry.encoding);
         }
@@ -1227,6 +1232,7 @@ unsigned int ziplistLen(unsigned char *zl) {
 }
 
 /* Return ziplist blob size in bytes. */
+// 获取压缩列表的字节长度
 size_t ziplistBlobLen(unsigned char *zl) {
     return intrev32ifbe(ZIPLIST_BYTES(zl));
 }

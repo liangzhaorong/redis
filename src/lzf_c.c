@@ -96,7 +96,13 @@
  */
 // LZF 数据压缩的基本思想是: 数据与前面重复的, 记录重复位置以及重复长度,
 // 否则直接记录原始数据内容.
-
+// LZF 压缩算法流程:
+//   遍历输入字符串, 对当前字符及其后面 2 个字符进行散列运算, 如果在 Hash 表中
+// 找到曾经出现的记录, 则计算重复字节的长度以及位置, 反之直接输出数据.
+//
+// 参数:
+// - in_data, in_len: 待压缩数据以及长度
+// - out_data, out_len: 压缩后的数据及其长度
 unsigned int
 lzf_compress (const void *const in_data, unsigned int in_len,
 	      void *out_data, unsigned int out_len
@@ -106,7 +112,7 @@ lzf_compress (const void *const in_data, unsigned int in_len,
               )
 {
 #if !LZF_STATE_ARG
-  LZF_STATE htab;
+  LZF_STATE htab; // htab 用于散列运算, 进而获取上次重复点的位置
 #endif
   const u8 *ip = (const u8 *)in_data;
         u8 *op = (u8 *)out_data;
@@ -138,6 +144,7 @@ lzf_compress (const void *const in_data, unsigned int in_len,
 
   lit = 0; op++; /* start run */
 
+  // 计算该元素以及后面 2 个元素的 Hash 值, 计算在 Hash 表中的位置
   hval = FRST (ip);
   while (ip < in_end - 2)
     {
@@ -159,7 +166,7 @@ lzf_compress (const void *const in_data, unsigned int in_len,
 #else
           && *(u16 *)ref == *(u16 *)ip
 #endif
-        )
+        ) // 在 Hash 表中找到之前出现过的记录
         {
           /* match found at *ref++ */
           unsigned int len = 2;
@@ -198,6 +205,7 @@ lzf_compress (const void *const in_data, unsigned int in_len,
                   len++; if (ref [len] != ip [len]) break;
                 }
 
+              // 统计重复长度, ip 为输入数据当前处理位置指针, ref 为数据之前出现的位置
               do
                 len++;
               while (len < maxlen && ref[len] == ip[len]);
@@ -208,6 +216,7 @@ lzf_compress (const void *const in_data, unsigned int in_len,
           len -= 2; /* len is now #octets - 1 */
           ip++;
 
+          // 将重复长度, 重复位置的偏移量写入, op 为当前输出位置指针, off 为偏移位置, len 为重复长度
           if (len < 7)
             {
               *op++ = (off >> 8) + (len << 5);

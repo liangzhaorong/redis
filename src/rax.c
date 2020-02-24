@@ -198,12 +198,14 @@ raxNode *raxNewNode(size_t children, int datafield) {
 
 /* Allocate a new rax and return its pointer. On out of memory the function
  * returns NULL. */
+//
+// 创建 rax 并初始化
 rax *raxNew(void) {
-    rax *rax = rax_malloc(sizeof(*rax));
+    rax *rax = rax_malloc(sizeof(*rax)); // 申请空间
     if (rax == NULL) return NULL;
-    rax->numele = 0;
-    rax->numnodes = 1;
-    rax->head = raxNewNode(0,0);
+    rax->numele = 0;                     // 当前元素个数为 0
+    rax->numnodes = 1;                   // 当前节点个数为 0
+    rax->head = raxNewNode(0,0);         // 构造头节点
     if (rax->head == NULL) {
         rax_free(rax);
         return NULL;
@@ -454,6 +456,21 @@ raxNode *raxCompressNode(raxNode *n, unsigned char *s, size_t len, raxNode **chi
  * means that the current node represents the key (that is, none of the
  * compressed node characters are needed to represent the key, just all
  * its parents nodes). */
+//
+// 参数:
+// - rax: 待查找的 Rax
+// - s: 待查找的 key
+// - len: s 的长度
+// - stopnode: 查找过程中的终止节点, 也就意味着, 当 rax 查找到该节点时, 待查找的 key 
+//   已经匹配完成, 或者当前节点无法与待查找的 key 匹配
+// - plink: 用于记录父节点中指向 *stopnode 的指针的位置, 当 *stopnode 变化时, 也需要修改父节点
+//   指向该节点的指针.
+// - splitpos: 用于记录压缩节点的匹配位置
+// - ts: 当 ts 不为空时, 会将查找该 key 的路径写入该变量.
+//
+// 该函数返回 s 的匹配长度, 当 s!=len 时, 表示未查找到该 key; 当 s==len 时, 需要检验 *stopnode
+// 是否为 key, 并且当 *stopnode 为压缩节点时, 还需要检查 splitpos 是否为 0(可能匹配到某个压缩
+// 节点中间的某个元素).
 static inline size_t raxLowWalk(rax *rax, unsigned char *s, size_t len, raxNode **stopnode, raxNode ***plink, int *splitpos, raxStack *ts) {
     raxNode *h = rax->head;
     raxNode **parentlink = &rax->head;
@@ -899,6 +916,9 @@ oom:
 
 /* Overwriting insert. Just a wrapper for raxGenericInsert() that will
  * update the element if there is already one for the same key. */
+//
+// 将 s 指向的长度为 len 的 key 插入到 rax 中, data 为该 key 对应的 value, 如果 key 
+// 已经存在, old 返回该 key 之前的 value, 同时会使用 data 覆盖该 key 之前的 value
 int raxInsert(rax *rax, unsigned char *s, size_t len, void *data, void **old) {
     return raxGenericInsert(rax,s,len,data,old,1);
 }
@@ -906,13 +926,18 @@ int raxInsert(rax *rax, unsigned char *s, size_t len, void *data, void **old) {
 /* Non overwriting insert function: this if an element with the same key
  * exists, the value is not updated and the function returns 0.
  * This is a just a wrapper for raxGenericInsert(). */
+//
+// 参数含义与 raxInsert 相同, 但是当 key 已经存在时, 不进行插入.
 int raxTryInsert(rax *rax, unsigned char *s, size_t len, void *data, void **old) {
+    // 最后一个参数 0 表示不进行覆盖写
     return raxGenericInsert(rax,s,len,data,old,0);
 }
 
 /* Find a key in the rax, returns raxNotFound special void pointer value
  * if the item was not found, otherwise the value associated with the
  * item is returned. */
+//
+// 在 rax 中查找长度为 len 的字符串 s(s 为 rax 中的一个 key), 找到返回该 key 对应的 value
 void *raxFind(rax *rax, unsigned char *s, size_t len) {
     raxNode *h;
 
@@ -920,8 +945,8 @@ void *raxFind(rax *rax, unsigned char *s, size_t len) {
     int splitpos = 0;
     size_t i = raxLowWalk(rax,s,len,&h,NULL,&splitpos,NULL);
     if (i != len || (h->iscompr && splitpos != 0) || !h->iskey)
-        return raxNotFound;
-    return raxGetData(h);
+        return raxNotFound; // 没有找到这个 key
+    return raxGetData(h);   // 查到 key, 将 key 对应的 value 返回
 }
 
 /* Return the memory address where the 'parent' node stores the specified
@@ -1017,6 +1042,8 @@ raxNode *raxRemoveChild(raxNode *parent, raxNode *child) {
 
 /* Remove the specified item. Returns 1 if the item was found and
  * deleted, 0 otherwise. */
+//
+// 在 rax 中删除长度为 len 的 s(s 代表待删除的 key), *old 用于返回该 key 对应的 value
 int raxRemove(rax *rax, unsigned char *s, size_t len, void **old) {
     raxNode *h;
     raxStack ts;
@@ -1237,6 +1264,8 @@ void raxRecursiveFree(rax *rax, raxNode *n, void (*free_callback)(void*)) {
 
 /* Free a whole radix tree, calling the specified callback in order to
  * free the auxiliary data. */
+//
+// 释放 rax, 释放每个 key 时, 都会调用 free_callback 函数
 void raxFreeWithCallback(rax *rax, void (*free_callback)(void*)) {
     raxRecursiveFree(rax,rax->head,free_callback);
     assert(rax->numnodes == 0);
@@ -1244,6 +1273,7 @@ void raxFreeWithCallback(rax *rax, void (*free_callback)(void*)) {
 }
 
 /* Free a whole radix tree. */
+// 释放 rax
 void raxFree(rax *rax) {
     raxFreeWithCallback(rax,NULL);
 }
@@ -1253,8 +1283,10 @@ void raxFree(rax *rax) {
 /* Initialize a Rax iterator. This call should be performed a single time
  * to initialize the iterator, and must be followed by a raxSeek() call,
  * otherwise the raxPrev()/raxNext() functions will just return EOF. */
+//
+// 用于初始化 raxIterator 结构
 void raxStart(raxIterator *it, rax *rt) {
-    it->flags = RAX_ITER_EOF; /* No crash if the iterator is not seeked. */
+    it->flags = RAX_ITER_EOF; // 默认值为迭代结束
     it->rt = rt;
     it->key_len = 0;
     it->key = it->key_static_string;
@@ -1505,6 +1537,14 @@ int raxIteratorPrevStep(raxIterator *it, int noup) {
  * Return 0 if the seek failed for syntax error or out of memory. Otherwise
  * 1 is returned. When 0 is returned for out of memory, errno is set to
  * the ENOMEM value. */
+//
+// 在 raxStart 初始化迭代器后, 必须调用 raxSeek 函数初始化迭代器的位置.
+// 参数:
+// - it: raxStart 初始化的迭代器
+// - op: 查找操作符, 可以为大于(>)、小于(<)、大于等于(>=)、小于等于(<=)、
+//   等于(=)、首个元素(^)、末尾元素($)
+// - ele: 待查找的 key
+// - len: ele 的长度
 int raxSeek(raxIterator *it, const char *op, unsigned char *ele, size_t len) {
     int eq = 0, lt = 0, gt = 0, first = 0, last = 0;
 
@@ -1799,6 +1839,7 @@ int raxCompare(raxIterator *iter, const char *op, unsigned char *key, size_t key
 }
 
 /* Free the iterator. */
+// 用于结束迭代并释放相关资源
 void raxStop(raxIterator *it) {
     if (it->key != it->key_static_string) rax_free(it->key);
     raxStackFree(&it->stack);
@@ -1808,6 +1849,8 @@ void raxStop(raxIterator *it) {
  * failed to seek an appropriate element, so that raxNext() or raxPrev()
  * will return zero, or when an EOF condition was reached while iterating
  * with raxNext() and raxPrev(). */
+//
+// 用于标识迭代器迭代结束
 int raxEOF(raxIterator *it) {
     return it->flags & RAX_ITER_EOF;
 }

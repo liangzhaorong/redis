@@ -8,6 +8,7 @@
  * a sequence counter. IDs generated in the same millisecond (or in a past
  * millisecond if the clock jumped backward) will use the millisecond time
  * of the latest generated ID and an incremented sequence. */
+// streamID 以每个消息创建时的时间(1970 年 1 月 1 日至今的毫秒数)以及序号组成
 typedef struct streamID {
     uint64_t ms;        /* Unix time in milliseconds. */
     uint64_t seq;       /* Sequence number. */
@@ -17,10 +18,8 @@ typedef struct stream {
     // rax 存储消息生产者生产的具体消息, 每个消息有唯一的 ID. 以消息 ID 为键,
     // 消息内容为值存储在 rax 中, 值得注意的是, rax 中的一个节点可能存储多个消息
     rax *rax;               /* The radix tree holding the stream. */
-    // 代表当前 stream 中的消息个数(不包括已经删除的消息)
-    uint64_t length;        /* Number of elements inside this stream. */
-    // 当前 stream 中最后插入的消息的 ID, stream 为空时, 设置为 0
-    streamID last_id;       /* Zero if there are yet no items. */
+    uint64_t length;  // 代表当前 stream 中的消息个数(不包括已经删除的消息)
+    streamID last_id; // 当前 stream 中最后插入的消息的 ID, stream 为空时, 设置为 0
     // 消费组. 消费组是 Stream 中的一个重要的概念, 每个 stream 会有多个消费组, 每个消费组
     // 通过组名称进行唯一标识, 同时关联一个 streamGG 结构
     rax *cgroups;           /* Consumer groups dictionary: name -> streamCG */
@@ -69,7 +68,8 @@ typedef struct streamIterator {
     unsigned char value_buf[LP_INTBUF_SIZE];
 } streamIterator;
 
-/* Consumer group. */
+// 消费组. 每个 Stream 会有多个消费组, 每个消费组通过组名称进行唯一标识, 
+// 同时关联一个 StreamGG 结构.
 typedef struct streamCG {
     // 为该消费组已经确认的最后一个消息的 ID
     streamID last_id;       /* Last delivered (not acknowledged) ID for this
@@ -89,6 +89,7 @@ typedef struct streamCG {
 } streamCG;
 
 /* A specific consumer in a consumer group.  */
+// 消费者. 每个消费者通过 streamConsumer 唯一标识.
 typedef struct streamConsumer {
     // 为该消费者最后一次活跃的时间
     mstime_t seen_time;         /* Last time this consumer was active. */

@@ -42,13 +42,12 @@
  * attempted_compress: 1 bit, boolean, used for verifying during testing.
  * extra: 10 bits, free for future use; pads out the remainder of 32 bits */
 typedef struct quicklistNode {
-    // prev、next 指向该节点的前后节点
-    struct quicklistNode *prev;
+    struct quicklistNode *prev; // prev、next 指向该节点的前后节点
     struct quicklistNode *next;
-    unsigned char *zl;           // 指向该节点对应的 ziplist 结构
-    unsigned int sz;             // 代表整个 ziplist 结构的大小
-    unsigned int count : 16;     // ziplist 中元素项的个数
-    unsigned int encoding : 2;   // 采用的编码方式: 1 代表是原生的, 2 代表使用 LZF 进行压缩
+    unsigned char *zl;          // 指向该节点对应的 ziplist 结构
+    unsigned int sz;            // 代表整个 ziplist 结构的大小
+    unsigned int count : 16;    // ziplist 中元素项的个数
+    unsigned int encoding : 2;  // 采用的编码方式: 1 代表是原生的, 2 代表使用 LZF 进行压缩
     // quicklistNode 节点 zl 指向的容器类型: 1 代表 none, 2 代表使用 ziplist 存储数据
     unsigned int container : 2;  /* NONE==1 or ZIPLIST==2 */
     // 代表这个节点之前是否是压缩节点, 若是, 则在使用压缩节点
@@ -66,7 +65,7 @@ typedef struct quicklistNode {
 // 当对 ziplist 利用 LZF 算法进行压缩时, quicklistNode 节点指向的结构为 quicklistLZF
 typedef struct quicklistLZF {
     // 表示 compressed 所占字节大小
-    unsigned int sz; /* LZF size in bytes*/
+    unsigned int sz; /* LZF size in bytes */
     char compressed[];
 } quicklistLZF;
 
@@ -79,8 +78,8 @@ typedef struct quicklistLZF {
 typedef struct quicklist {
     quicklistNode *head; // 指向 quicklist 的首节点
     quicklistNode *tail; // 指向 quicklist 的尾节点
-    unsigned long count;        /* quicklist 中元素总数 */
-    unsigned long len;          /* quicklistNode(节点) 个数 */
+    unsigned long count; // quicklist 中元素总数
+    unsigned long len;   // quicklistNode(节点) 个数
     // 指明每个 quicklistNode 中 ziplist 长度. 
     // 当 fill 为正数时, 表明每个 ziplist 最多含有的数据项数;
     // 当 fill 为负数时, 含义如下：
@@ -89,7 +88,14 @@ typedef struct quicklist {
     // - -3: ziplist 节点最大为 16KB
     // - -4: ziplist 节点最大为 32KB
     // - -5: ziplist 节点最大为 64KB
+    // 默认为 -2
     int fill : 16;
+    // fill 取负数时, 必须大于等于 -5. 可以通过 Redis 修改参数 list-max-ziplist-size 配置
+    // 节点所占内存大小. 实际上每个 ziplist 节点所占的内存会在该值上下浮动; 考虑 quicklistNode
+    // 节点个数较多时, 经常访问的是两端的数据, 为了进一步节省空间, Redis 允许对中间的
+    // quicklistNode 节点进行压缩, 通过修改参数 list-compress-depth 进行配置, 即设置 compress
+    // 参数, 该项的具体含义是两端各有 compress 个节点不压缩, 当 compress 为 1 时, quicklistNode
+    // 个数为 3 时, 中间的节点将进行压缩, 而两端的节点不进行压缩.
     unsigned int compress : 16; /* depth of end nodes not to compress;0=off */
 } quicklist;
 

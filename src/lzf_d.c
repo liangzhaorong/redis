@@ -67,12 +67,14 @@ lzf_decompress (const void *const in_data,  unsigned int in_len,
 
   do
     {
+      // ip 指向当前待处理的输入数据
       unsigned int ctrl = *ip++;
 
       if (ctrl < (1 << 5)) /* literal run */
         {
           ctrl++;
 
+          // 直接读取后面的数据
           if (op + ctrl > out_end)
             {
               SET_ERRNO (E2BIG);
@@ -105,6 +107,7 @@ lzf_decompress (const void *const in_data,  unsigned int in_len,
         }
       else /* back reference */
         {
+          // 计算重复的位置和长度, len 为重复长度, ref 为重复位置, op 指向当前输出位置
           unsigned int len = ctrl >> 5;
 
           u8 *ref = op - ((ctrl & 0x1f) << 8) - 1;

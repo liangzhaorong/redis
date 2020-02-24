@@ -96,14 +96,10 @@
 
 #define RAX_NODE_MAX_SIZE ((1<<29)-1)
 typedef struct raxNode {
-    // 表明当前节点是否包含一个 key, 占用 1bit
-    uint32_t iskey:1;     /* Does this node contain a key? */
-    // 表明当前 key 对应的 value 是否为空, 占用 1bit
-    uint32_t isnull:1;    /* Associated value is NULL (don't store it). */
-    // 表明当前节点是否为压缩节点, 占用 1bit
-    uint32_t iscompr:1;   /* Node is compressed. */
-    // 压缩节点的字符串长度或者非压缩节点的子节点个数, 占用 29bit
-    uint32_t size:29;     /* Number of children, or compressed string len. */
+    uint32_t iskey:1;   // 表明当前节点是否包含一个 key, 占用 1bit
+    uint32_t isnull:1;  // 表明当前 key 对应的 value 是否为空, 占用 1bit
+    uint32_t iscompr:1; // 表明当前节点是否为压缩节点, 占用 1bit
+    uint32_t size:29;   // 压缩节点的字符串长度或者非压缩节点的子节点个数, 占用 29bit
     /* Data layout is as follows:
      *
      * If node is not compressed we have 'size' bytes, one for each children
@@ -148,15 +144,12 @@ typedef struct rax {
 #define RAX_STACK_STATIC_ITEMS 32
 // raxStack 用于存储从根节点到当前节点的路径
 typedef struct raxStack {
-    // 用于记录路径, 该指针可能指向 static_items(路径较短时) 或者堆空间内存
-    void **stack; /* Points to static_items or an heap allocated array. */
-    // 这两个字段代表 stack 指向的空间的已用空间以及最大空间
-    size_t items, maxitems; /* Number of items contained and total space. */
+    void **stack; // 用于记录路径, 该指针可能指向 static_items(路径较短时) 或者堆空间内存
+    size_t items, maxitems; // 这两个字段代表 stack 指向的空间的已用空间以及最大空间
     /* Up to RAXSTACK_STACK_ITEMS items we avoid to allocate on the heap
      * and use this static array of pointers instead. */
     void *static_items[RAX_STACK_STATIC_ITEMS]; // 一个数组, 数组中的每个元素都是指针, 用于存储路径
-    // 代表当前栈是否出现过内存溢出
-    int oom; /* True if pushing into this stack failed for OOM at some point. */
+    int oom; // 代表当前栈是否出现过内存溢出
 } raxStack;
 
 /* Optional callback used for iterators and be notified on each rax node,
@@ -190,23 +183,15 @@ typedef struct raxIterator {
     // - RAX_ITER_EOF: 代表当前迭代器已经遍历到 rax 树的最后一个节点
     // - RAX_ITER_SAFE: 代表当前迭代器为安全迭代器, 可以进行写操作
     int flags;
-    // 当前迭代器对应的 rax
-    rax *rt;                /* Radix tree we are iterating. */
-    // 存储了当前迭代器遍历到的 key, 该指针指向 key_static_string 或者从堆中申请的内存
-    unsigned char *key;     /* The current string. */
-    // 指向当前 key 关联的 value 值
-    void *data;             /* Data associated to this key. */
-    // key_len 和 key_max 为 key 指向的空间的已用空间以及最大空间
-    size_t key_len;         /* Current key length. */
-    size_t key_max;         /* Max key len the current key buffer can hold. */
-    // key 的默认空间, 当 key 比较大时, 会使用堆空间内存
-    unsigned char key_static_string[RAX_ITER_STATIC_LEN];
-    // 当前 key 所在的 raxNode
-    raxNode *node;          /* Current node. Only for unsafe iteration. */
-    // 记录了从根节点到当前节点的路径, 用于 raxNode 的向上遍历
-    raxStack stack;         /* Stack used for unsafe iteration. */
-    // 节点的回调函数, 通常为空
-    raxNodeCallback node_cb; /* Optional node callback. Normally set to NULL. */
+    rax *rt;            // 当前迭代器对应的 rax
+    unsigned char *key; // 存储了当前迭代器遍历到的 key, 该指针指向 key_static_string 或者从堆中申请的内存
+    void *data;         // 指向当前 key 关联的 value 值
+    size_t key_len;     // key_len 和 key_max 为 key 指向的空间的已用空间以及最大空间
+    size_t key_max;
+    unsigned char key_static_string[RAX_ITER_STATIC_LEN]; // key 的默认空间, 当 key 比较大时, 会使用堆空间内存
+    raxNode *node;           // 当前 key 所在的 raxNode
+    raxStack stack;          // 记录了从根节点到当前节点的路径, 用于 raxNode 的向上遍历
+    raxNodeCallback node_cb; // 节点的回调函数, 通常为空
 } raxIterator;
 
 /* A special pointer returned for not found items. */

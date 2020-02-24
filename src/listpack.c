@@ -42,6 +42,27 @@
 #include "listpack.h"
 #include "listpack_malloc.h"
 
+/* listpack 数据结构:
+ *    <Total Bytes> <Num Elem> <Entry1> ... <EntryN> <End>
+ *
+ * - Total Bytes: 整个 listpack 的空间大小, 占用 4 个字节, 每个 listpack 最多占用 4294967295Bytes.
+ * - Num Elem: listpack 中的元素个数, 即 Entry 的个数, 占用 2 个字节, 值得注意的是, 这并不意味着
+ *   listpack 最多只能存放 65535 个 Entry, 当 Entry 数大于等于 65535 时, Num Elem 被设置为 65535,
+ *   此时需要获取元素个数, 需要遍历整个 listpack.
+ * - End: listpack 结束标志, 占用 1 个字节, 内容为 oxFF.
+ * - Entry: listpack 中的具体元素, 其内容可以是字符串或整数, 每个 Entry 由 3 部分组成
+ *
+ * Entry 数据结构:
+ *    <Encode> <content> <backlen>
+ *
+ * - Encode: 该元素的编码方式
+ * - content: 内容
+ * - backlen: 这个 Entry 的长度(Encode+content), 注意并不包括 backlen 自身的长度, 占用的字节数小于
+ *   等于 5. backlen 所占用的每个字节的第一个 bit 用于标识; 0 代表结束, 1 代表尚未结束, 每个字节只有
+ //  7bit 有效. backlen 主要用于从后向前遍历, 当我们需要找到当前元素的上一个元素时, 可以从后向前依次
+ //  查找每个字节, 找到上一个 Entry 的 backlen 字节的结束标识, 进而可以计算出上一个元素的长度.
+ */
+
 #define LP_HDR_SIZE 6       /* 32 bit total len + 16 bit number of elements. */
 #define LP_HDR_NUMELE_UNKNOWN UINT16_MAX
 #define LP_MAX_INT_ENCODING_LEN 9
@@ -102,6 +123,7 @@
 
 #define lpGetNumElements(p)          (((uint32_t)(p)[4]<<0) | \
                                       ((uint32_t)(p)[5]<<8))
+// 设置 listpack 的 Total Bytes 值, 即整个 listpack 占用的空间大小
 #define lpSetTotalBytes(p,v) do { \
     (p)[0] = (v)&0xff; \
     (p)[1] = ((v)>>8)&0xff; \
@@ -203,13 +225,14 @@ int lpStringToInt64(const char *s, unsigned long slen, int64_t *value) {
 
 /* Create a new, empty listpack.
  * On success the new listpack is returned, otherwise an error is returned. */
+// 创建 listpack 实例
 unsigned char *lpNew(void) {
     // LP_HDR_SIZE = 6, 为 listpack 的头部
     unsigned char *lp = lp_malloc(LP_HDR_SIZE+1); // 申请空间
     if (lp == NULL) return NULL;
-    lpSetTotalBytes(lp,LP_HDR_SIZE+1);
-    lpSetNumElements(lp,0);
-    lp[LP_HDR_SIZE] = LP_EOF;
+    lpSetTotalBytes(lp,LP_HDR_SIZE+1); // 设置 Total Bytes 值(初始一个空的 listpack 结构占用的空间大小为 7)
+    lpSetNumElements(lp,0);            // 设置 Num Elem 为 0
+    lp[LP_HDR_SIZE] = LP_EOF;          // 设置 End, listpack 结束标志, 默认为 oxFF
     return lp;
 }
 
@@ -398,6 +421,8 @@ unsigned char *lpSkip(unsigned char *p) {
 /* If 'p' points to an element of the listpack, calling lpNext() will return
  * the pointer to the next element (the one on the right), or NULL if 'p'
  * already pointed to the last element of the listpack. */
+//
+// 下一个元素位置
 unsigned char *lpNext(unsigned char *lp, unsigned char *p) {
     ((void) lp); /* lp is not used for now. However lpPrev() uses it. */
     p = lpSkip(p);
@@ -408,6 +433,8 @@ unsigned char *lpNext(unsigned char *lp, unsigned char *p) {
 /* If 'p' points to an element of the listpack, calling lpPrev() will return
  * the pointer to the preivous element (the one on the left), or NULL if 'p'
  * already pointed to the first element of the listpack. */
+//
+// 上一个元素位置
 unsigned char *lpPrev(unsigned char *lp, unsigned char *p) {
     if (p-lp == LP_HDR_SIZE) return NULL;
     p--; /* Seek the first backlen byte of the last element. */
@@ -418,14 +445,18 @@ unsigned char *lpPrev(unsigned char *lp, unsigned char *p) {
 
 /* Return a pointer to the first element of the listpack, or NULL if the
  * listpack has no elements. */
+//
+// 获取第一个元素位置
 unsigned char *lpFirst(unsigned char *lp) {
     lp += LP_HDR_SIZE; /* Skip the header. */
-    if (lp[0] == LP_EOF) return NULL;
+    if (lp[0] == LP_EOF) return NULL; // listpack 为空
     return lp;
 }
 
 /* Return a pointer to the last element of the listpack, or NULL if the
  * listpack has no elements. */
+//
+// 获取最后一个元素位置
 unsigned char *lpLast(unsigned char *lp) {
     unsigned char *p = lp+lpGetTotalBytes(lp)-1; /* Seek EOF element. */
     return lpPrev(lp,p); /* Will return NULL if EOF is the only element. */
@@ -489,6 +520,11 @@ uint32_t lpLength(unsigned char *lp) {
  * assumed to be valid, so that would be a very high API cost. However a function
  * in order to check the integrity of the listpack at load time is provided,
  * check lpIsValid(). */
+//
+// lpGet 用于获取 p 指向的 listpack 中真正存储的元素:
+// 1. 当元素采用字符串编码时, 返回字符串的第一个元素位置, count 为元素个数
+// 2. 当采用整数编码时, 若 intbuf 不为空, 则将整型数据转换为字符串存储在 intbuf 中,
+//    count 为元素个数,并返回 intbuf. 若 intbuf 为空, 直接将数据存储在 count 中, 返回 null
 unsigned char *lpGet(unsigned char *p, int64_t *count, unsigned char *intbuf) {
     int64_t val;
     uint64_t uval, negstart, negmax;

@@ -1249,6 +1249,8 @@ robj *objectCommandLookup(client *c, robj *key) {
     return (robj*) dictGetVal(de);
 }
 
+// 该函数是 object 命令的辅助函数, 可在不修改 LRU 和其他参数的情况下查找对象,
+// 并带有回复功能. 如果没有找到对象则返回空; 找到对象则读取相应属性
 robj *objectCommandLookupOrReply(client *c, robj *key, robj *reply) {
     robj *o = objectCommandLookup(c,key);
 
@@ -1258,6 +1260,7 @@ robj *objectCommandLookupOrReply(client *c, robj *key, robj *reply) {
 
 /* Object command allows to inspect the internals of an Redis Object.
  * Usage: OBJECT <refcount|encoding|idletime|freq> <key> */
+//
 // object 5 个子命令
 // - help: 帮助命令, object 命令使用手册
 // - refcount: 获得指定键关联的值的引用数, 即 redisObject 对象 refcount 属性

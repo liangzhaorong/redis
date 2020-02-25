@@ -93,7 +93,13 @@ int activeExpireCycleTryExpire(redisDb *db, dictEntry *de, long long now) {
  * If type is ACTIVE_EXPIRE_CYCLE_SLOW, that normal expire cycle is
  * executed, where the time limit is a percentage of the REDIS_HZ period
  * as specified by the ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC define. */
-// 过期键删除
+//
+// Redis 过期键删除策略有两种: 
+// 1. 访问数据库时, 检验该键是否过期, 如果过期则删除;
+// 2. 周期性删除过期键, beforeSleep 函数与 serverCron 函数都会执行. server 结构体的
+//    active_expire_enabled 字段表示是否开启周期性删除过期键策略, 用户可通过 
+//    set-active-expire 指令配置; server.masterhost 字段存储当前 Redis 服务器的 master
+//    服务器的域名, 如果为 NULL 说明当前服务器不是某个 Redis 服务器的 slaver.
 void activeExpireCycle(int type) {
     /* This function has some global state in order to continue the work
      * incrementally across calls. */
@@ -106,6 +112,8 @@ void activeExpireCycle(int type) {
 
     int j, iteration = 0;
     int dbs_per_call = CRON_DBS_PER_CALL;
+    // timelimit 为函数最大执行时间, 循环删除过期键时会校验函数执行时间是否超过此限制,
+    // 超过则结束循环. 因此快速过期键删除时需要缩短 timelimit
     long long start = ustime(), timelimit, elapsed;
 
     /* When clients are paused the dataset should be static not just from the
@@ -113,10 +121,12 @@ void activeExpireCycle(int type) {
      * expires and evictions of keys not being performed. */
     if (clientsArePaused()) return;
 
+    // 快速过期键删除
     if (type == ACTIVE_EXPIRE_CYCLE_FAST) {
         /* Don't start a fast cycle if the previous cycle did not exit
          * for time limit. Also don't repeat a fast cycle for the same period
          * as the fast cycle total duration itself. */
+        //
         // 上次 activeExpireCycle 函数是否已经执行完毕
         if (!timelimit_exit) return;
         // 当前时间距离上次执行快速过期键删除是否已经超过 2000 微妙
@@ -480,26 +490,32 @@ void ttlGenericCommand(client *c, int output_ms) {
     long long expire, ttl = -1;
 
     /* If the key does not exist at all, return -2 */
+    // 以不修改查找对象(最后访问时间, LOOKUP_NOTOUCH) 方式查找 key, 若不存在则返回 -2
     if (lookupKeyReadWithFlags(c->db,c->argv[1],LOOKUP_NOTOUCH) == NULL) {
         addReplyLongLong(c,-2);
         return;
     }
     /* The key exists. Return -1 if it has no expire, or the actual
      * TTL value otherwise. */
+    // 在过期字典里查找 key 对应的过期时间
     expire = getExpire(c->db,c->argv[1]);
-    if (expire != -1) {
+    if (expire != -1) { // 表示有过期时间
         ttl = expire-mstime();
         if (ttl < 0) ttl = 0;
     }
     if (ttl == -1) {
         addReplyLongLong(c,-1);
     } else {
+        // 毫秒转秒+500 四舍五入
         addReplyLongLong(c,output_ms ? ttl : ((ttl+500)/1000));
     }
 }
 
 /* TTL key */
+// ttl 命令返回 key 剩余的生存时间, 单位秒. 一般用于根据 key 生存时间进行业务逻辑判断处理等,
+// 也可用于排查问题. 类似命令还有 pttl 返回以毫秒为单位的生存时间, 它们调用的函数都相同.
 void ttlCommand(client *c) {
+    // 返回键的生存时间, 单位秒
     ttlGenericCommand(c, 0);
 }
 

@@ -60,6 +60,9 @@
     #endif
 #endif
 
+// 创建事件循环 eventLoop, 即分配结构体所需内存, 并初始化结构体各字段
+// 输入参数 setsize 理论上等于用户配置的最大客户端数目即可, 但是为了确保安全,
+// 这个设置 setsize 等于最大客户端数目加上 128.
 aeEventLoop *aeCreateEventLoop(int setsize) {
     aeEventLoop *eventLoop;
     int i;
@@ -219,6 +222,13 @@ static void aeAddMillisecondsToNow(long long milliseconds, long *sec, long *ms) 
     *ms = when_ms;
 }
 
+// 创建定时事件并添加到定时事件链表中
+// 参数:
+// - milliseconds: 表示此定时事件触发时间, 单位毫秒, 注意这是一个相对时间, 即从当前时间算起,
+//   milliseconds 毫秒后此定时事件会被触发.
+// - proc: 指向定时事件的处理函数
+// - clientData: 指向对应的结构体对象
+// - finalizerProc: 删除定时事件时调用的回调函数
 long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
         aeTimeProc *proc, void *clientData,
         aeEventFinalizerProc *finalizerProc)
@@ -343,6 +353,8 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
 
             id = te->id;
             // 处理到期的定时事件
+            // 定时事件处理函数 timeProc 返回值 retval, 其表示此定时事件下次应该被触发的时间,
+            // 单位毫秒, 且是一个相对时间, 即从当前时间算起, retval 毫秒后此定时事件会被触发.
             retval = te->timeProc(eventLoop, id, te->clientData);
             processed++;
             // 重设定时事件的到期时间

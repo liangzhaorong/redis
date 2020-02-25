@@ -1000,6 +1000,8 @@ void clientsCron(void) {
 /* This function handles 'background' operations we are required to do
  * incrementally in Redis databases, such as active key expiring, resizing,
  * rehashing. */
+//
+// 处理数据库的定时函数, 如删除数据库过期键等
 void databasesCron(void) {
     /* Expire keys by random sampling. Not required for slaves
      * as master will synthesize DELs for us. */
@@ -1090,7 +1092,9 @@ void updateCachedTime(void) {
  * so in order to throttle execution of things we want to do less frequently
  * a macro is used: run_with_period(milliseconds) { .... }
  */
+//
 // serverCron 实现 Redis 服务器所有定时任务的周期执行
+// 注意, serverCron 函数的执行时间不能过长, 否则会导致服务器不能及时响应客户端的命令请求. 
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     int j;
     UNUSED(eventLoop);
@@ -1214,7 +1218,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     clientsCron();
 
     /* Handle background operations on Redis databases. */
-    // 处理 Redis 数据库的后台操作
+    // 处理数据库(清除数据库过期键等)
     databasesCron();
 
     /* Start a scheduled AOF rewrite if this was requested by the user while
@@ -1357,6 +1361,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
             server.rdb_bgsave_scheduled = 0;
     }
 
+    // serverCron 函数执行次数加 1
     server.cronloops++;
     return 1000/server.hz;
 }
@@ -1375,8 +1380,9 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
 
     /* Run a fast expire cycle (the called function will return
      * ASAP if a fast cycle is not needed). */
+    // active_expire_enabled 表示是否开启周期性删除过期键策略
     if (server.active_expire_enabled && server.masterhost == NULL)
-        activeExpireCycle(ACTIVE_EXPIRE_CYCLE_FAST);
+        activeExpireCycle(ACTIVE_EXPIRE_CYCLE_FAST); // 快速删除过期键
 
     /* Send all the slaves an ACK request if at least one client blocked
      * during the previous event loop iteration. */
@@ -1428,11 +1434,16 @@ void afterSleep(struct aeEventLoop *eventLoop) {
 
 /* =========================== Server initialization ======================== */
 
+// 对象 robj 的 refcount 字段存储当前对象的引用次数, 意味着对象是可以共享的. 需注意的是,
+// 只有当对象 robj 存储的是 0~10000 的整数时, 对象 robj 才会被共享, 且这些共享整数对象
+// 的引用次数初始化为 INT_MAX, 保证不会被释放. 执行命令时 Redis 会返回一些字符串回复, 这些
+// 字符串对象同样在服务器初始化时创建, 且永远不会尝试释放这类对象. 所有共享对象都存储在全局
+// 结构体变量 shared 中.
 void createSharedObjects(void) {
     int j;
 
     shared.crlf = createObject(OBJ_STRING,sdsnew("\r\n"));
-    shared.ok = createObject(OBJ_STRING,sdsnew("+OK\r\n"));
+    shared.ok = createObject(OBJ_STRING,sdsnew("+OK\r\n"));  // 创建米拧回复字符串对象
     shared.err = createObject(OBJ_STRING,sdsnew("-ERR\r\n"));
     shared.emptybulk = createObject(OBJ_STRING,sdsnew("$0\r\n\r\n"));
     shared.czero = createObject(OBJ_STRING,sdsnew(":0\r\n"));
@@ -1922,6 +1933,11 @@ void checkTcpBacklogSettings(void) {
  * impossible to bind, or no bind addresses were specified in the server
  * configuration but the function is not able to bind * for at least
  * one of the IPv4 or IPv6 protocols. */
+//
+// 创建 socket 并启动监听. 
+// 用户可通过指令 port 配置 socket 绑定端口号, 指令 bind 配置 socket 绑定 IP 地址;
+// 注意指令 bind 可配置多个 IP 地址, 中间用空格隔开; 创建 socket 是只需要循环所有 IP
+// 地址即可.
 int listenToPort(int port, int *fds, int *count) {
     int j;
 
@@ -1945,8 +1961,10 @@ int listenToPort(int port, int *fds, int *count) {
 
             if (*count == 1 || unsupported) {
                 /* Bind the IPv4 address as well. */
+                // 创建 socket 并启动监听, 文件描述符存储在 fds 数组作为返回参数
                 fds[*count] = anetTcpServer(server.neterr,port,NULL,
                     server.tcp_backlog);
+                // 设置 socket 非阻塞
                 if (fds[*count] != ANET_ERR) {
                     anetNonBlock(NULL,fds[*count]);
                     (*count)++;
@@ -2039,7 +2057,7 @@ void initServer(void) {
     server.hz = server.config_hz;
     server.pid = getpid();
     server.current_client = NULL;
-    server.clients = listCreate();
+    server.clients = listCreate();  // 初始化客户端链表
     server.clients_index = raxNew();
     server.clients_to_close = listCreate();
     server.slaves = listCreate();
@@ -2064,7 +2082,7 @@ void initServer(void) {
             strerror(errno));
         exit(1);
     }
-    server.db = zmalloc(sizeof(redisDb)*server.dbnum);
+    server.db = zmalloc(sizeof(redisDb)*server.dbnum); // 创建数据库字典
 
     /* Open the TCP listening socket for the user commands. */
     /* 为用户命令打开 TCP 监听套接字 */
@@ -2148,7 +2166,7 @@ void initServer(void) {
 
     /* Create an event handler for accepting new connections in TCP and Unix
      * domain sockets. */
-    /* 为 TCP 和 Unix 域套接字中接收到的新连接创建事件处理 */
+    // 遍历所有的监听 socket, 为其创建对应的 socket 可读写事件
     for (j = 0; j < server.ipfd_count; j++) {
         if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
             acceptTcpHandler,NULL) == AE_ERR)
@@ -2460,7 +2478,7 @@ void call(client *c, int flags) {
     /* Call the command. */
     dirty = server.dirty;
     start = ustime();
-    c->cmd->proc(c);
+    c->cmd->proc(c); // 执行命令处理函数
     duration = ustime()-start;
     dirty = server.dirty-dirty;
     if (dirty < 0) dirty = 0;
@@ -2486,12 +2504,13 @@ void call(client *c, int flags) {
         char *latency_event = (c->cmd->flags & CMD_FAST) ?
                               "fast-command" : "command";
         latencyAddSampleIfNeeded(latency_event,duration/1000);
-        slowlogPushEntryIfNeeded(c,c->argv,c->argc,duration);
+        slowlogPushEntryIfNeeded(c,c->argv,c->argc,duration); // 记录慢查询日志
     }
     if (flags & CMD_CALL_STATS) {
         /* use the real command that was executed (cmd and lastamc) may be
          * different, in case of MULTI-EXEC or re-written commands such as
          * EXPIRE, GEOADD, etc. */
+        // 更新命令统计信息: 当前命令执行时间与调用次数
         real_cmd->microseconds += duration;
         real_cmd->calls++;
     }
@@ -2573,7 +2592,7 @@ int processCommand(client *c) {
      * go through checking for replication and QUIT will cause trouble
      * when FORCE_REPLICATION is enabled and would be implemented in
      * a regular command proc. */
-    if (!strcasecmp(c->argv[0]->ptr,"quit")) {
+    if (!strcasecmp(c->argv[0]->ptr,"quit")) { // 如果是 quit 命令直接返回并关闭客户端
         addReply(c,shared.ok);
         c->flags |= CLIENT_CLOSE_AFTER_REPLY;
         return C_ERR;
@@ -2582,7 +2601,7 @@ int processCommand(client *c) {
     /* Now lookup the command and check ASAP about trivial error conditions
      * such as wrong arity, bad command name and so forth. */
     c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr);
-    if (!c->cmd) {
+    if (!c->cmd) { // 执行 lookupCommand 查找命令后, 如果命令不存在返回错误
         flagTransaction(c);
         sds args = sdsempty();
         int i;
@@ -2592,6 +2611,8 @@ int processCommand(client *c) {
             (char*)c->argv[0]->ptr, args);
         sdsfree(args);
         return C_OK;
+
+    // 如果命令参数数目不合法, 则返回错误
     } else if ((c->cmd->arity > 0 && c->cmd->arity != c->argc) ||
                (c->argc < -c->cmd->arity)) {
         flagTransaction(c);
@@ -2601,6 +2622,8 @@ int processCommand(client *c) {
     }
 
     /* Check if the user is authenticated */
+    // 如果配置文件中使用指令 "requirepass password" 设置了密码, 且客户端没有认证通过, 只能执行
+    // auth 命令, auth 命令格式为 "AUTH password"
     if (server.requirepass && !c->authenticated && c->cmd->proc != authCommand)
     {
         flagTransaction(c);
@@ -2640,6 +2663,10 @@ int processCommand(client *c) {
      * the event loop since there is a busy Lua script running in timeout
      * condition, to avoid mixing the propagation of scripts with the
      * propagation of DELs due to eviction. */
+    //
+    // 如果配置文件中使用指令 "maxmemory <bytes>" 设置了最大内存限制, 且当前内存使用量超过了
+    // 该配置门限, 服务器会拒绝执行带有 "m"(CMD_DENYOOM) 标识的命令, 如 SET 命令、APPEND 命令
+    // 和 LPUSH 命令等.
     if (server.maxmemory && !server.lua_timedout) {
         int out_of_memory = freeMemoryIfNeededAndSafe() == C_ERR;
         /* freeMemoryIfNeeded may flush slave output buffers. This may result
@@ -2745,6 +2772,8 @@ int processCommand(client *c) {
         addReply(c, shared.slowscripterr);
         return C_OK;
     }
+
+    // 上面所有校验规则都通过后, 才会调用命令处理函数执行命令
 
     /* Exec the command */
     if (c->flags & CLIENT_MULTI &&
@@ -4073,7 +4102,7 @@ int main(int argc, char **argv) {
     getRandomHexChars(hashseed,sizeof(hashseed));
     dictSetHashFunctionSeed((uint8_t*)hashseed);
     server.sentinel_mode = checkForSentinelMode(argc,argv);
-    // 初始化 server 端配置
+    // 初始化 server 端配置, 包括用户可配置的参数, 以及命令表的初始化
     initServerConfig();
     moduleInitModulesSystem();
 

@@ -78,13 +78,13 @@ typedef struct aeFileEvent {
 
 /* Time event structure: 时间事件结构体 */
 typedef struct aeTimeEvent {
-    long long id;   // 时间事件唯一 ID, 通过字段 eventLoop->timeEventNextId 实现
-    long when_sec;  // 时间事件触发的秒数
-    long when_ms;   // 时间事件触发的毫秒数
+    long long id;                        // 时间事件唯一 ID, 通过字段 eventLoop->timeEventNextId 实现
+    long when_sec;                       // 时间事件触发的秒数
+    long when_ms;                        // 时间事件触发的毫秒数
     aeTimeProc *timeProc;                // 时间事件处理函数
     aeEventFinalizerProc *finalizerProc; // 函数指针, 删除时间事件节点前会调用此函数
-    void *clientData;          // 指向对应的客户端对象
-    struct aeTimeEvent *prev;  // 时间事件表采用链表维护
+    void *clientData;                    // 指向对应的客户端对象
+    struct aeTimeEvent *prev;            // 时间事件表采用链表维护
     struct aeTimeEvent *next;
 } aeTimeEvent;
 

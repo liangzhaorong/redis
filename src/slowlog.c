@@ -122,11 +122,18 @@ void slowlogInit(void) {
  * configured max length. */
 void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long duration) {
     if (server.slowlog_log_slower_than < 0) return; /* Slowlog disabled */
+    // 执行时间超过门限, 记录该命令
     if (duration >= server.slowlog_log_slower_than)
         listAddNodeHead(server.slowlog,
                         slowlogCreateEntry(c,argv,argc,duration));
 
     /* Remove old entries if needed. */
+    // 慢查询日志最多记录条数为 slowlog_max_len, 超过需删除
+    // 可在配置文件中使用指令 "slowlog-log-slower-than 10000" 配置 "执行时间超过多少毫秒"
+    // 才会记录慢查询日志, 指令 "slowlog-max-len" 配置慢查询日志最大数目, 超过会删除最早的
+    // 日志记录.
+    // 慢查询日志记录在服务端结构体的 slowlog 字段, 即使存取速度非常快, 也不会影响命令执行效率
+    // 用户可通过 "SLOWLOG subcommand [argument]" 命令查看服务器记录的慢查询日志
     while (listLength(server.slowlog) > server.slowlog_max_len)
         listDelNode(server.slowlog,listLast(server.slowlog));
 }

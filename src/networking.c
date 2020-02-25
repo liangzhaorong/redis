@@ -91,10 +91,24 @@ client *createClient(int fd) {
      * in the context of a client. When commands are executed in other
      * contexts (for instance a Lua script) we need a non connected client. */
     if (fd != -1) {
-        anetNonBlock(NULL,fd);
-        anetEnableTcpNoDelay(NULL,fd);
-        if (server.tcpkeepalive)
+        anetNonBlock(NULL,fd);         // 设置 socket 为非阻塞模式
+        // TCP 是基于字节流的可靠传输层协议, 为了提升网络利用率, 一般默认开启 Nagle. 当应用层
+        // 调用 write 函数发送数据时, TCP 并不一定立刻将数据发送出去, 根据 Nagle 算法, 必须满足
+        // 一定条件才行. Nagle 规定如下:
+        //   - 如果数据包长度大于一定门限时, 则立即发送;
+        //   - 如果数据包中含有 FIN(表示断开 TCP 链接)字段, 则立即发送;
+        //   - 如果当前设置了 TCP_NODELAY 选项, 则立即发送.
+        // 如果以上条件都不满足, 则默认需要等待 200 毫秒超时后才发送. Redis 服务器向客户端返回
+        // 命令回复时, 希望 TCP 能立即将回复发送给客户端, 因此需要设置 TCP_NODELAY.
+        // 如果不设置, 对客户端来说, 命令请求的响应时间会大大加长.
+        anetEnableTcpNoDelay(NULL,fd); // 设置 TCP_NODELAY
+        // TCP 是可靠的传输层协议, 但每次都需要经历 "三次握手" 与 "四次挥手", 为了提升效率,
+        // 可设置 SO_KEEPALIVE, 即 TCP 长连接, 这样 TCP 传输层会定时发送心跳包确认该连接
+        // 的可靠性. 应用层也不需要频繁地创建与释放 TCP 连接了.
+        if (server.tcpkeepalive)       // 如果服务端配置了 tcpkeepalive, 则设置 SO_KEEPALIVE
             anetKeepAlive(NULL,fd,server.tcpkeepalive);
+        // 接收到客户端请求后, 服务器需要创建文件事件等待客户端的命令请求, 这里文件事件的处理函数
+        // 为 readQueryFromClient, 当服务器接收到客户端的命令请求时, 会执行此函数.
         if (aeCreateFileEvent(server.el,fd,AE_READABLE,
             readQueryFromClient, c) == AE_ERR)
         {
@@ -299,6 +313,7 @@ void addReply(client *c, robj *obj) {
     if (prepareClientToWrite(c) != C_OK) return;
 
     if (sdsEncodedObject(obj)) {
+        // 添加字符串到输出缓冲区
         if (_addReplyToBuffer(c,obj->ptr,sdslen(obj->ptr)) != C_OK)
             _addReplyStringToList(c,obj->ptr,sdslen(obj->ptr));
     } else if (obj->encoding == OBJ_ENCODING_INT) {
@@ -663,7 +678,7 @@ int clientHasPendingReplies(client *c) {
 #define MAX_ACCEPTS_PER_CALL 1000
 static void acceptCommonHandler(int fd, int flags, char *ip) {
     client *c;
-    if ((c = createClient(fd)) == NULL) {
+    if ((c = createClient(fd)) == NULL) { // 为接受的连接创建客户端对象
         serverLog(LL_WARNING,
             "Error registering fd event for the new client: %s (fd=%d)",
             strerror(errno),fd);
@@ -731,7 +746,7 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
     c->flags |= flags;
 }
 
-// acceptTcpHandler 首次经过三次握手, 接收到 tcp 连接请求时, 会调用该函数进行处理
+// socket 监听事件的处理函数, 接收客户端连接, 创建客户端对象
 void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     int cport, cfd, max = MAX_ACCEPTS_PER_CALL;
     char cip[NET_IP_STR_LEN];
@@ -1309,6 +1324,7 @@ int processMultibulkBuffer(client *c) {
 
         /* We know for sure there is a whole line since newline != NULL,
          * so go ahead and find out the multi bulk length. */
+        // 解析命令请求参数数目, 并存储在客户端对象的 multibulklen 字段中
         serverAssertWithInfo(c,NULL,c->querybuf[c->qb_pos] == '*');
         ok = string2ll(c->querybuf+1+c->qb_pos,newline-(c->querybuf+1+c->qb_pos),&ll);
         if (!ok || ll > 1024*1024) {
@@ -1317,19 +1333,21 @@ int processMultibulkBuffer(client *c) {
             return C_ERR;
         }
 
+        // 记录已解析位置偏移量
         c->qb_pos = (newline-c->querybuf)+2;
 
         if (ll <= 0) return C_OK;
 
-        c->multibulklen = ll;
+        c->multibulklen = ll; // 解析得到命令请求参数数目
 
         /* Setup argv array on client structure */
         if (c->argv) zfree(c->argv);
+        // 分配请求参数存储空间
         c->argv = zmalloc(sizeof(robj*)*c->multibulklen);
     }
 
     serverAssertWithInfo(c,NULL,c->multibulklen > 0);
-    while(c->multibulklen) {
+    while(c->multibulklen) { // 循环解析每个请求参数
         /* Read bulk length if unknown */
         if (c->bulklen == -1) {
             newline = strchr(c->querybuf+c->qb_pos,'\r');
@@ -1347,6 +1365,7 @@ int processMultibulkBuffer(client *c) {
             if (newline-(c->querybuf+c->qb_pos) > (ssize_t)(sdslen(c->querybuf)-c->qb_pos-2))
                 break;
 
+            // 解析当前参数字符串长度, 字符串首字符偏移量为 c->qb_pos
             if (c->querybuf[c->qb_pos] != '$') {
                 addReplyErrorFormat(c,
                     "Protocol error: expected '$', got '%c'",
@@ -1403,12 +1422,13 @@ int processMultibulkBuffer(client *c) {
                 c->querybuf = sdsnewlen(SDS_NOINIT,c->bulklen+2);
                 sdsclear(c->querybuf);
             } else {
+                // 解析参数
                 c->argv[c->argc++] =
                     createStringObject(c->querybuf+c->qb_pos,c->bulklen);
                 c->qb_pos += c->bulklen+2;
             }
             c->bulklen = -1;
-            c->multibulklen--;
+            c->multibulklen--; // 待解析参数数目减 1
         }
     }
 
@@ -1423,7 +1443,27 @@ int processMultibulkBuffer(client *c) {
  * more query buffer to process, because we read more data from the socket
  * or because a client was blocked and later reactivated, so there could be
  * pending query buffer, already representing a full command, to process. */
-// 解析客户端命令请求
+//
+// 解析客户端命令请求.
+//
+// TCP 是一种基于字节流的传输层通信协议, 因此接收到的 TCP 数据不一定是一个完整的数据包,
+// 其有可能是多个数据包的组合, 也有可能是某一个数据包的部分, 这种现象被称为半包或粘包.
+// 为了区分一个完整的数据包, 通常有 3 种方法: 
+//   1. 数据包长度固定;
+//   2. 通过特定的分隔符区分, 比如 HTTP 协议就是通过换行符区分的;
+//   3. 通过在数据包头部设置长度字段区分数据包长度, 比如 FastCGI 协议.
+// Redis 采用自定义协议格式实现不同命令请求的区分, 如当用户在 redis-cli 客户端键入如下命令:
+//   SET redis-key value1
+// 客户端会将该命令请求转换为以下协议格式, 然后发送给服务器:
+//
+//   *3\r\n$3\r\nSET\r\n$9\r\nredis-key\r\n$6\r\nvalue1\r\n
+//
+// 其中, 换行符 \r\n 用于区分命令请求的若干参数, "*3" 表示该命令有 3 个参数, 
+// "$3" "$9" 和 "$6" 等表示该参数字符串长度.
+//
+// 注意, Redis 还支持在 telnet 会话输入命令的方式, 只是此时没有了请求协议中的 "*" 来声明
+// 参数的数量, 因此必须使用空格来分隔各个参数, 服务器在接收到数据之后, 会将空格作为参数
+// 分隔符解析命令请求. 这种方式的命令请求称为内联命令.
 void processInputBuffer(client *c) {
     server.current_client = c;
 
@@ -1457,9 +1497,10 @@ void processInputBuffer(client *c) {
             }
         }
 
-        if (c->reqtype == PROTO_REQ_INLINE) {
+        // 根据请求类型解析请求命令
+        if (c->reqtype == PROTO_REQ_INLINE) { // 若为内联命令, 即以空格作为参数分隔符的命令
             if (processInlineBuffer(c) != C_OK) break;
-        } else if (c->reqtype == PROTO_REQ_MULTIBULK) {
+        } else if (c->reqtype == PROTO_REQ_MULTIBULK) { // 以 \r\n 作为分隔符的命令
             if (processMultibulkBuffer(c) != C_OK) break;
         } else {
             serverPanic("Unknown request type");
@@ -1470,6 +1511,7 @@ void processInputBuffer(client *c) {
             resetClient(c);
         } else {
             /* Only reset the client when the command was executed. */
+            // 上面解析完命令请求后, 这里会调用 processCommand 处理该命令请求
             if (processCommand(c) == C_OK) {
                 if (c->flags & CLIENT_MASTER && !(c->flags & CLIENT_MULTI)) {
                     /* Update the applied replication offset of our master. */

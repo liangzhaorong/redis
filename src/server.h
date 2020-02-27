@@ -1122,8 +1122,8 @@ struct redisServer {
     struct malloc_stats cron_malloc_stats; /* sampled in serverCron(). */
     long long stat_net_input_bytes; /* Bytes read from network. */
     long long stat_net_output_bytes; /* Bytes written to network. */
-    size_t stat_rdb_cow_bytes;      /* Copy on write bytes during RDB saving. */
-    size_t stat_aof_cow_bytes;      /* Copy on write bytes during AOF rewrite. */
+    size_t stat_rdb_cow_bytes;      // 最后一次执行 RDB 任务消耗的内存
+    size_t stat_aof_cow_bytes;      // 最后一次执行 AOF 重写任务消耗的内存
     /* The following two are used to track instantaneous metrics, like
      * number of operations per second, network traffic. */
     struct {
@@ -1153,7 +1153,7 @@ struct redisServer {
     int daemonize;                  /* True if running as a daemon */
     clientBufferLimitsConfig client_obuf_limits[CLIENT_TYPE_OBUF_COUNT];
     /* AOF persistence */
-    int aof_state;                  /* AOF_(ON|OFF|WAIT_REWRITE) */
+    int aof_state;                  // 是否开启了 AOF 功能: AOF_(ON|OFF|WAIT_REWRITE)
     int aof_fsync;                  /* Kind of fsync() policy */
     char *aof_filename;             /* Name of the AOF file */
     int aof_no_fsync_on_rewrite;    /* Don't fsync if a rewrite is in prog. */
@@ -1162,21 +1162,23 @@ struct redisServer {
     off_t aof_rewrite_base_size;    /* AOF size on latest startup or rewrite. */
     off_t aof_current_size;         /* AOF current size. */
     off_t aof_fsync_offset;         /* AOF offset which is already synced to disk. */
-    int aof_rewrite_scheduled;      /* Rewrite once BGSAVE terminates. */
-    pid_t aof_child_pid;            /* PID if rewriting process */
+    int aof_rewrite_scheduled;      // 是否等待调度一次 AOF 重写任务. 如果触发了一次 AOF 重写, 但是后台正在执行 RDB 保存任务时会将该状态置为 1
+    pid_t aof_child_pid;            // 是否正在后台执行 AOF 重写任务
     list *aof_rewrite_buf_blocks;   /* Hold changes during an AOF rewrite. */
     sds aof_buf;      /* AOF buffer, written before entering the event loop */
     int aof_fd;       /* File descriptor of currently selected AOF file */
     int aof_selected_db; /* Currently selected DB in AOF */
     time_t aof_flush_postponed_start; /* UNIX time of postponed AOF flush */
     time_t aof_last_fsync;            /* UNIX time of last fsync() */
-    time_t aof_rewrite_time_last;   /* Time used by last AOF rewrite run. */
-    time_t aof_rewrite_time_start;  /* Current AOF rewrite start time. */
-    int aof_lastbgrewrite_status;   /* C_OK or C_ERR */
+    time_t aof_rewrite_time_last;   // 最后一次执行 AOF 重写任务消耗的时间
+    time_t aof_rewrite_time_start;  // 最后一次在后台执行 AOF 重写任务的开始时间
+    int aof_lastbgrewrite_status;   // 最后一次执行 AOF 重写任务的状态: C_OK or C_ERR
     unsigned long aof_delayed_fsync;  /* delayed AOF fsync() counter */
     int aof_rewrite_incremental_fsync;/* fsync incrementally while aof rewriting? */
     int rdb_save_incremental_fsync;   /* fsync incrementally while rdb saving? */
-    int aof_last_write_status;      /* C_OK or C_ERR */
+    // 最后一次执行 AOF 缓冲区写入的状态(服务端执行命令时会开辟一段内存空间将命令放入其中, 
+    // 然后从该缓冲区中同步到文件. 该状态标记最后一次同步到文件的状态): C_OK/C_ERR
+    int aof_last_write_status;      
     int aof_last_write_errno;       /* Valid if aof_last_write_status is ERR */
     int aof_load_truncated;         /* Don't stop on unexpected AOF EOF. */
     int aof_use_rdb_preamble;       /* Use RDB preamble on AOF rewrites. */
@@ -1193,7 +1195,7 @@ struct redisServer {
     /* RDB persistence */
     long long dirty;                // 最后一次保存之后改变的键的个数
     long long dirty_before_bgsave;  /* Used to restore dirty on failed BGSAVE */
-    pid_t rdb_child_pid;            /* PID of RDB saving child */
+    pid_t rdb_child_pid;            // 是否正在后台执行 RDB 保存任务
     struct saveparam *saveparams;   /* Save points array for RDB */
     int saveparamslen;              /* Number of saving points */
     char *rdb_filename;             /* Name of RDB file */
@@ -1201,11 +1203,11 @@ struct redisServer {
     int rdb_checksum;               /* Use RDB checksum? */
     time_t lastsave;                // 最后一次执行 RDB 保存任务的时间
     time_t lastbgsave_try;          /* Unix time of last attempted bgsave */
-    time_t rdb_save_time_last;      /* Time used by last RDB save run. */
-    time_t rdb_save_time_start;     /* Current RDB save start time. */
+    time_t rdb_save_time_last;      // 最后一次执行 RDB 保存任务消耗的时间
+    time_t rdb_save_time_start;     // 最后一次在后台执行 RDB 任务时的开始时间
     int rdb_bgsave_scheduled;       /* BGSAVE when possible if true. */
     int rdb_child_type;             /* Type of save by active child. */
-    int lastbgsave_status;          /* C_OK or C_ERR */
+    int lastbgsave_status;          // 最后一次执行 RDB 保存任务的状态: C_OK/C_ERR
     int stop_writes_on_bgsave_err;  /* Don't allow writes if can't BGSAVE */
     int rdb_pipe_write_result_to_parent; /* RDB pipes used to return the state */
     int rdb_pipe_read_result_from_child; /* of each slave in diskless SYNC. */

@@ -38,12 +38,13 @@
 
 /* ===================== Creation and parsing of objects ==================== */
 
+// 创建 robj 对象
 robj *createObject(int type, void *ptr) {
     robj *o = zmalloc(sizeof(*o));
     o->type = type;
     o->encoding = OBJ_ENCODING_RAW;
-    o->ptr = ptr;
-    o->refcount = 1;
+    o->ptr = ptr;    // 指向底层实际的存储对象
+    o->refcount = 1; // 初始该对象的引用计数为 1
 
     /* Set the LRU to the current lruclock (minutes resolution), or
      * alternatively the LFU counter. */
@@ -246,7 +247,7 @@ robj *createHashObject(void) {
     return o;
 }
 
-// 创建有序集合对象
+// 创建指向 zset(有序集合) 对象的 robj
 robj *createZsetObject(void) {
     zset *zs = zmalloc(sizeof(*zs));
     robj *o;
@@ -254,10 +255,11 @@ robj *createZsetObject(void) {
     zs->dict = dictCreate(&zsetDictType,NULL); // 创建字典
     zs->zsl = zslCreate();                     // 创建跳跃表
     o = createObject(OBJ_ZSET,zs);
-    o->encoding = OBJ_ENCODING_SKIPLIST;
+    o->encoding = OBJ_ENCODING_SKIPLIST; // 设置当前对象的底层存储结构为 skiplist(跳跃表)
     return o;
 }
 
+// 创建指向 ziplist(压缩列表) 对象的 robj
 robj *createZsetZiplistObject(void) {
     unsigned char *zl = ziplistNew();
     robj *o = createObject(OBJ_ZSET,zl);
@@ -607,6 +609,7 @@ size_t stringObjectLen(robj *o) {
     }
 }
 
+// 将传入的 object 指向的值转换为 double 类型返回
 int getDoubleFromObject(const robj *o, double *target) {
     double value;
     char *eptr;
@@ -615,8 +618,11 @@ int getDoubleFromObject(const robj *o, double *target) {
         value = 0;
     } else {
         serverAssertWithInfo(NULL,o,o->type == OBJ_STRING);
-        if (sdsEncodedObject(o)) {
+        if (sdsEncodedObject(o)) { // sds 编码类型
             errno = 0;
+            // strtod()会扫描参数 o->ptr 字符串，跳过前面的空格字符，直到遇上数字或正负符号
+            // 才开始做转换, 到出现非数字或字符串结束时('\o')才结束转换, 并将结果返回. 若
+            // eptr 不为 NULL, 则会将遇到不合条件而终止的 o->ptr 中的字符指针由 eptr 传回.
             value = strtod(o->ptr, &eptr);
             if (sdslen(o->ptr) == 0 ||
                 isspace(((const char*)o->ptr)[0]) ||

@@ -182,7 +182,7 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
      * propagate *identical* replication stream. In this way this slave can
      * advertise the same replication ID as the master (since it shares the
      * master replication history and has the same backlog and offsets). */
-    if (server.masterhost != NULL) return;
+    if (server.masterhost != NULL) return; // 若当前为 master 服务器, 则返回
 
     /* If there aren't slaves, and there is no backlog buffer to populate,
      * we can return ASAP. */

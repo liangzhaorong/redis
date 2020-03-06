@@ -1023,13 +1023,17 @@ unsigned char *zzlLastInLexRange(unsigned char *zl, zlexrangespec *range) {
     return NULL;
 }
 
+// 从压缩列表中查找 ele 项, 若存在则返回
 unsigned char *zzlFind(unsigned char *zl, sds ele, double *score) {
+    // 获取压缩列表中第一个元素项
     unsigned char *eptr = ziplistIndex(zl,0), *sptr;
 
+    // 从头遍历压缩列表
     while (eptr != NULL) {
         sptr = ziplistNext(zl,eptr);
         serverAssert(sptr != NULL);
 
+        // 找出值相等的项, 并返回
         if (ziplistCompare(eptr,(unsigned char*)ele,sdslen(ele))) {
             /* Matching element, pull out score. */
             if (score != NULL) *score = zzlGetScore(sptr);
@@ -1358,6 +1362,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
 
         if ((eptr = zzlFind(zobj->ptr,ele,&curscore)) != NULL) {
             /* NX? Return, same element already exists. */
+            // 带有 NX 选项下, 仅会向有序集合中添加新成员, 而不会对已有的成员进行更新
             if (nx) {
                 *flags |= ZADD_NOP;
                 return 1;
@@ -1380,6 +1385,8 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
                 *flags |= ZADD_UPDATED;
             }
             return 1;
+
+        // 若压缩列表中不存在 ele 项且非 XX 操作
         } else if (!xx) {
             /* Optimize: check if the element is too large or the list
              * becomes too long *before* executing zzlInsert. */
@@ -1563,6 +1570,7 @@ long zsetRank(robj *zobj, sds ele, int reverse) {
  *----------------------------------------------------------------------------*/
 
 /* This generic command implements both ZADD and ZINCRBY. */
+// ZADD sorted_set score member [score member ...]
 void zaddGenericCommand(client *c, int flags) {
     static char *nanerr = "resulting score is not a number (NaN)";
     robj *key = c->argv[1];
@@ -1581,6 +1589,7 @@ void zaddGenericCommand(client *c, int flags) {
 
     /* Parse options. At the end 'scoreidx' is set to the argument position
      * of the score of the first score-element pair. */
+    // 定位 zadd 命令中第一个 'score member' 对的索引位置
     scoreidx = 2;
     while(scoreidx < c->argc) {
         char *opt = c->argv[scoreidx]->ptr;
@@ -1600,12 +1609,12 @@ void zaddGenericCommand(client *c, int flags) {
 
     /* After the options, we expect to have an even number of args, since
      * we expect any number of score-element pairs. */
-    elements = c->argc-scoreidx;
+    elements = c->argc-scoreidx; // score-element 参数总数量
     if (elements % 2 || !elements) {
         addReply(c,shared.syntaxerr);
         return;
     }
-    elements /= 2; /* Now this holds the number of score-element pairs. */
+    elements /= 2; // 现在包含的 score-element 对的数量
 
     /* Check for incompatible options. */
     if (nx && xx) {
@@ -1624,14 +1633,18 @@ void zaddGenericCommand(client *c, int flags) {
      * before executing additions to the sorted set, as the command should
      * either execute fully or nothing at all. */
     scores = zmalloc(sizeof(double)*elements);
+    // 循环遍历 score-element 对, 将 score 转换为 dobule 类型并保存到 scores 数组中
     for (j = 0; j < elements; j++) {
         if (getDoubleFromObjectOrReply(c,c->argv[scoreidx+j*2],&scores[j],NULL)
             != C_OK) goto cleanup;
     }
 
     /* Lookup the key and create the sorted set if does not exist. */
+    // 从数据库中查找该 key
     zobj = lookupKeyWrite(c->db,key);
     if (zobj == NULL) {
+        // 若 key 不存在且 ZADD 带有 XX 参数, 则表示本次 ZADD 操作只会对有序集合
+        // 已有的成员进行更新，而不会向有序集合添加任何新成员
         if (xx) goto reply_to_client; /* No key + XX option: nothing to do. */
         // 一般情况下, 不会将 zset-max-ziplist-entries 配置成 0, 元素的字符串长度也不会太长,
         // 所以在创建有序集合时, 默认使用压缩列表的底层实现.
@@ -1642,6 +1655,7 @@ void zaddGenericCommand(client *c, int flags) {
         } else {
             zobj = createZsetZiplistObject(); // 创建压缩列表结构
         }
+        // 将键值添加到数据库中
         dbAdd(c->db,key,zobj);
     } else {
         if (zobj->type != OBJ_ZSET) {
@@ -1652,10 +1666,12 @@ void zaddGenericCommand(client *c, int flags) {
 
     for (j = 0; j < elements; j++) {
         double newscore;
-        score = scores[j];
+        score = scores[j]; // 获取 score
         int retflags = flags;
 
+        // 获取 score 对应的 member 值
         ele = c->argv[scoreidx+1+j*2]->ptr;
+        // 将 score 及对应的 member 添加到 zset 中
         int retval = zsetAdd(zobj, score, ele, &retflags, &newscore);
         if (retval == 0) {
             addReplyError(c,nanerr);

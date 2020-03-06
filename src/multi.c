@@ -85,15 +85,21 @@ void flagTransaction(client *c) {
         c->flags |= CLIENT_DIRTY_EXEC;
 }
 
+// 开启一个新事务: MULTI
+// 开启事务后, 用户键入的所有数据操作将不会立即执行, 而是按顺序放入到一个事务队列中,
+// 等待执行 EXEC 时再统一执行.
 void multiCommand(client *c) {
+    // 若已经在开启事务中, 又再次接收到开启事务的 MULTI 命令, 则返回错误
     if (c->flags & CLIENT_MULTI) {
         addReplyError(c,"MULTI calls can not be nested");
         return;
     }
-    c->flags |= CLIENT_MULTI;
+    c->flags |= CLIENT_MULTI; // 标志在开启事务中
     addReply(c,shared.ok);
 }
 
+// 放弃事务: DISCARD
+// 该命令将清空事务队列中已有的所有命令, 并让客户端退出事务模式
 void discardCommand(client *c) {
     if (!(c->flags & CLIENT_MULTI)) {
         addReplyError(c,"DISCARD without MULTI");
@@ -113,6 +119,7 @@ void execCommandPropagateMulti(client *c) {
     decrRefCount(multistring);
 }
 
+// 执行事务: EXEC
 void execCommand(client *c) {
     int j;
     robj **orig_argv;

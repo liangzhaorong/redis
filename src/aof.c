@@ -578,7 +578,7 @@ sds catAppendOnlyExpireAtCommand(sds buf, struct redisCommand *cmd, robj *key, r
 }
 
 void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int argc) {
-    sds buf = sdsempty();
+    sds buf = sdsempty(); // 创建一个空字符串
     robj *tmpargv[3];
 
     /* The DB this command was targeting is not the same as the last command

@@ -159,7 +159,11 @@ robj *lookupKeyRead(redisDb *db, robj *key) {
  * Returns the linked value object if the key exists or NULL if the key
  * does not exist in the specified DB. */
 robj *lookupKeyWrite(redisDb *db, robj *key) {
+    // 检测该 key 是否过期, 若已过期则执行过期流程, 如向所有从服务器发送该 key 已过期,
+    // 将对该 key 的 DEL 命令写入 AOF 文件, 执行本机的 DEL 操作
     expireIfNeeded(db,key);
+    // 查找该 key, 若存在则返回 key 对应的值, 同时根据缓存淘汰策略更新 robj->lru 字段;
+    // 若不存在则返回 NULL
     return lookupKey(db,key,LOOKUP_NONE);
 }
 
@@ -1103,6 +1107,7 @@ void setExpire(client *c, redisDb *db, robj *key, long long when) {
 
 /* Return the expire time of the specified key, or -1 if no expire
  * is associated with this key (i.e. the key is non volatile) */
+// 返回给定 key 的过期时间, 如果没有设置过期时间则返回 -1
 long long getExpire(redisDb *db, robj *key) {
     dictEntry *de;
 
@@ -1124,6 +1129,9 @@ long long getExpire(redisDb *db, robj *key) {
  * AOF and the master->slave link guarantee operation ordering, everything
  * will be consistent even if we allow write operations against expiring
  * keys. */
+// 将该 key 的 expires 传递到从服务器和 AOF 文件.
+// 当在 master 中 key 过期时, 对该 key 的 DEL 操作将会发送到所有的从服务器
+// 和 AOF 文件中(如果启用了 AOF 的话).
 void propagateExpire(redisDb *db, robj *key, int lazy) {
     robj *argv[2];
 
@@ -1132,8 +1140,11 @@ void propagateExpire(redisDb *db, robj *key, int lazy) {
     incrRefCount(argv[0]);
     incrRefCount(argv[1]);
 
+    // 若开启了 AOF 功能
     if (server.aof_state != AOF_OFF)
+        // 则将对该 key 的 DEL 命令操作写入到 AOF 文件中
         feedAppendOnlyFile(server.delCommand,db->id,argv,2);
+    // 若存在从服务器, 则向从服务器发送对该 key 的 DEL 操作
     replicationFeedSlaves(server.slaves,db->id,argv,2);
 
     decrRefCount(argv[0]);
@@ -1141,12 +1152,16 @@ void propagateExpire(redisDb *db, robj *key, int lazy) {
 }
 
 /* Check if the key is expired. */
+// 检测该 key 是否已过期, 若没有过期或没有设置过期时间则返回 0
 int keyIsExpired(redisDb *db, robj *key) {
+    // 从 db->expires 哈希表中获取该 key 的过期时间
     mstime_t when = getExpire(db,key);
 
+    // 若小于 0 则表示该 key 没有设置过期时间
     if (when < 0) return 0; /* No expire for this key */
 
     /* Don't expire anything while loading. It will be done later. */
+    // 当正在加载 RDB 文件时不会执行过期操作.
     if (server.loading) return 0;
 
     /* If we are in the context of a Lua script, we pretend that time is
@@ -1179,6 +1194,7 @@ int keyIsExpired(redisDb *db, robj *key) {
  * The return value of the function is 0 if the key is still valid,
  * otherwise the function returns 1 if the key is expired. */
 int expireIfNeeded(redisDb *db, robj *key) {
+    // 检测该 key 是否过期(设置有过期时间下), 若没有过期则返回 0
     if (!keyIsExpired(db,key)) return 0;
 
     /* If we are running in the context of a slave, instead of
@@ -1189,6 +1205,9 @@ int expireIfNeeded(redisDb *db, robj *key) {
      * Still we try to return the right information to the caller,
      * that is, 0 if we think the key should be still valid, 1 if
      * we think the key is expired at this time. */
+    // 若在从服务器的上下文中运行, 则不是从数据库中驱逐过期键, 而是返回 ASAP:
+    // 从服务器的 key 过期是由 master 控制的, master 将向 slave 针对该 key 发送
+    // DEL 操作.
     if (server.masterhost != NULL) return 1;
 
     /* Delete the key */

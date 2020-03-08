@@ -128,18 +128,21 @@ void bioInit(void) {
     }
 }
 
+// type 表示任务类型, arg1、arg2、arg3 为参数, 在处理任务时使用
 void bioCreateBackgroundJob(int type, void *arg1, void *arg2, void *arg3) {
     struct bio_job *job = zmalloc(sizeof(*job));
 
+    // 创建 bio_job 结构体包含当前时间和传入的 3 个参数, 将 bio_job 结构体追加
+    // 到对应类型的双向链表尾部, 这个过程是线程互斥的.
     job->time = time(NULL);
     job->arg1 = arg1;
     job->arg2 = arg2;
     job->arg3 = arg3;
-    pthread_mutex_lock(&bio_mutex[type]);
-    listAddNodeTail(bio_jobs[type],job);
-    bio_pending[type]++;
-    pthread_cond_signal(&bio_newjob_cond[type]);
-    pthread_mutex_unlock(&bio_mutex[type]);
+    pthread_mutex_lock(&bio_mutex[type]);        // 线程互斥锁
+    listAddNodeTail(bio_jobs[type],job);         // 追加任务到对应类型的链表尾部
+    bio_pending[type]++;                         // 标记未处理的数据量
+    pthread_cond_signal(&bio_newjob_cond[type]); // 唤醒一个异步处理线程
+    pthread_mutex_unlock(&bio_mutex[type]);      // 解锁
 }
 
 void *bioProcessBackgroundJobs(void *arg) {
@@ -159,7 +162,7 @@ void *bioProcessBackgroundJobs(void *arg) {
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
-    pthread_mutex_lock(&bio_mutex[type]);
+    pthread_mutex_lock(&bio_mutex[type]); // 加上互斥锁
     /* Block SIGALRM so we are sure that only the main thread will
      * receive the watchdog signal. */
     sigemptyset(&sigset);
@@ -172,16 +175,16 @@ void *bioProcessBackgroundJobs(void *arg) {
         listNode *ln;
 
         /* The loop always starts with the lock hold. */
-        if (listLength(bio_jobs[type]) == 0) {
+        if (listLength(bio_jobs[type]) == 0) { // 链表为空, 继续等待
             pthread_cond_wait(&bio_newjob_cond[type],&bio_mutex[type]);
             continue;
         }
         /* Pop the job from the queue. */
-        ln = listFirst(bio_jobs[type]);
+        ln = listFirst(bio_jobs[type]); // 从链表头部获取元素
         job = ln->value;
         /* It is now possible to unlock the background system as we know have
          * a stand alone job structure to process.*/
-        pthread_mutex_unlock(&bio_mutex[type]);
+        pthread_mutex_unlock(&bio_mutex[type]); // 解锁
 
         /* Process the job accordingly to its type. */
         if (type == BIO_CLOSE_FILE) {
@@ -193,11 +196,11 @@ void *bioProcessBackgroundJobs(void *arg) {
              * arg1 -> free the object at pointer.
              * arg2 & arg3 -> free two dictionaries (a Redis DB).
              * only arg3 -> free the skiplist. */
-            if (job->arg1)
+            if (job->arg1) // 释放对象
                 lazyfreeFreeObjectFromBioThread(job->arg1);
-            else if (job->arg2 && job->arg3)
+            else if (job->arg2 && job->arg3) // 释放数据库
                 lazyfreeFreeDatabaseFromBioThread(job->arg2,job->arg3);
-            else if (job->arg3)
+            else if (job->arg3) // 释放集群 slot 与 key 的映射关系
                 lazyfreeFreeSlotsMapFromBioThread(job->arg3);
         } else {
             serverPanic("Wrong job type in bioProcessBackgroundJobs().");
@@ -206,12 +209,12 @@ void *bioProcessBackgroundJobs(void *arg) {
 
         /* Lock again before reiterating the loop, if there are no longer
          * jobs to process we'll block again in pthread_cond_wait(). */
-        pthread_mutex_lock(&bio_mutex[type]);
-        listDelNode(bio_jobs[type],ln);
-        bio_pending[type]--;
+        pthread_mutex_lock(&bio_mutex[type]); // 加锁
+        listDelNode(bio_jobs[type],ln);       // 删除任务
+        bio_pending[type]--;                  // 任务计数减 1
 
         /* Unblock threads blocked on bioWaitStepOfType() if any. */
-        pthread_cond_broadcast(&bio_step_cond[type]);
+        pthread_cond_broadcast(&bio_step_cond[type]); // 广播消息
     }
 }
 

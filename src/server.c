@@ -2776,13 +2776,15 @@ int processCommand(client *c) {
     // 上面所有校验规则都通过后, 才会调用命令处理函数执行命令
 
     /* Exec the command */
+    // 若 client 有 CLIENT_MUITL 标志(即已开始事务)且不是 EXEC, DISCARD, MULTI 和 WATCH 
+    // 命令, 则将该命令放入队列.
     if (c->flags & CLIENT_MULTI &&
         c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
         c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
     {
-        queueMultiCommand(c);
+        queueMultiCommand(c); // 将命令放入队列
         addReply(c,shared.queued);
-    } else {
+    } else { // 否则调用 call 命令
         call(c,CMD_CALL_FULL);
         c->woff = server.master_repl_offset;
         if (listLength(server.ready_keys))

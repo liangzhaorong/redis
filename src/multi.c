@@ -54,6 +54,7 @@ void freeClientMultiState(client *c) {
 }
 
 /* Add a new command into the MULTI commands queue */
+// 将 MULTI~EXEC 间的命令添加到队列中
 void queueMultiCommand(client *c) {
     multiCmd *mc;
     int j;
@@ -72,10 +73,11 @@ void queueMultiCommand(client *c) {
 }
 
 void discardTransaction(client *c) {
-    freeClientMultiState(c);
+    freeClientMultiState(c); // 将所有入队命令清空
     initClientMultiState(c);
+    // 将 client 上事务相关的 flags 清空
     c->flags &= ~(CLIENT_MULTI|CLIENT_DIRTY_CAS|CLIENT_DIRTY_EXEC);
-    unwatchAllKeys(c);
+    unwatchAllKeys(c); // unwatch 所有的 key
 }
 
 /* Flag the transacation as DIRTY_EXEC so that EXEC will fail.
@@ -89,23 +91,23 @@ void flagTransaction(client *c) {
 // 开启事务后, 用户键入的所有数据操作将不会立即执行, 而是按顺序放入到一个事务队列中,
 // 等待执行 EXEC 时再统一执行.
 void multiCommand(client *c) {
-    // 若已经在开启事务中, 又再次接收到开启事务的 MULTI 命令, 则返回错误
+    // 若已经执行过 MULTI 命令, 则不能再次执行
     if (c->flags & CLIENT_MULTI) {
         addReplyError(c,"MULTI calls can not be nested");
         return;
     }
-    c->flags |= CLIENT_MULTI; // 标志在开启事务中
+    c->flags |= CLIENT_MULTI; // client 结构体设置 CLIENT_MULTI 标志
     addReply(c,shared.ok);
 }
 
 // 放弃事务: DISCARD
 // 该命令将清空事务队列中已有的所有命令, 并让客户端退出事务模式
 void discardCommand(client *c) {
-    if (!(c->flags & CLIENT_MULTI)) {
+    if (!(c->flags & CLIENT_MULTI)) { // 若没有开启事务
         addReplyError(c,"DISCARD without MULTI");
         return;
     }
-    discardTransaction(c);
+    discardTransaction(c); // 放弃事务
     addReply(c,shared.ok);
 }
 
@@ -128,6 +130,7 @@ void execCommand(client *c) {
     int must_propagate = 0; /* Need to propagate MULTI/EXEC to AOF / slaves? */
     int was_master = server.masterhost == NULL;
 
+    // 若没有开启事务, 直接返回错误
     if (!(c->flags & CLIENT_MULTI)) {
         addReplyError(c,"EXEC without MULTI");
         return;
@@ -139,10 +142,12 @@ void execCommand(client *c) {
      * A failed EXEC in the first case returns a multi bulk nil object
      * (technically it is not an error but a special behavior), while
      * in the second an EXECABORT error is returned. */
+    //
+    // 若该当前客户端 c 被设置了 CLIENT_DIRTY_CAS 标志, 则表示在事务期间有 key 被更改了
     if (c->flags & (CLIENT_DIRTY_CAS|CLIENT_DIRTY_EXEC)) {
         addReply(c, c->flags & CLIENT_DIRTY_EXEC ? shared.execaborterr :
                                                   shared.nullmultibulk);
-        discardTransaction(c);
+        discardTransaction(c); // 放弃事务
         goto handle_monitor;
     }
 
@@ -167,6 +172,7 @@ void execCommand(client *c) {
     orig_argc = c->argc;
     orig_cmd = c->cmd;
     addReplyMultiBulkLen(c,c->mstate.count);
+    // 依次按序执行 mstate 队列中的命令
     for (j = 0; j < c->mstate.count; j++) {
         c->argc = c->mstate.commands[j].argc;
         c->argv = c->mstate.commands[j].argv;
@@ -244,7 +250,7 @@ void watchForKey(client *c, robj *key) {
     listNode *ln;
     watchedKey *wk;
 
-    /* Check if we are already watching for this key */
+    // 遍历 watched_keys 链表, 检测该给定 key 是否已处于监听状态. 若已监听, 则直接返回
     listRewind(c->watched_keys,&li);
     while((ln = listNext(&li))) {
         wk = listNodeValue(ln);
@@ -252,18 +258,20 @@ void watchForKey(client *c, robj *key) {
             return; /* Key already watched */
     }
     /* This key is not already watched in this DB. Let's add it */
+    // 获取该监听 key 对应的客户端链表
     clients = dictFetchValue(c->db->watched_keys,key);
+    // 若该 key 首次有客户端进行监听, 则创建新的客户端链表
     if (!clients) {
         clients = listCreate();
         dictAdd(c->db->watched_keys,key,clients);
-        incrRefCount(key);
+        incrRefCount(key); // key 的引用计数加 1
     }
-    listAddNodeTail(clients,c);
+    listAddNodeTail(clients,c); // 将当前客户端添加到 clients 链表尾部
     /* Add the new key to the list of keys watched by this client */
     wk = zmalloc(sizeof(*wk));
     wk->key = key;
     wk->db = c->db;
-    incrRefCount(key);
+    incrRefCount(key); // key 的引用计数加 1
     listAddNodeTail(c->watched_keys,wk);
 }
 
@@ -302,16 +310,18 @@ void touchWatchedKey(redisDb *db, robj *key) {
     listIter li;
     listNode *ln;
 
-    if (dictSize(db->watched_keys) == 0) return;
+    if (dictSize(db->watched_keys) == 0) return; // 如果没有监听的 key, 直接返回
+    // 查看被修改的 key 是否处于监听状态
     clients = dictFetchValue(db->watched_keys, key);
-    if (!clients) return;
+    if (!clients) return; // 如果未监听, 直接返回
 
     /* Mark all the clients watching this key as CLIENT_DIRTY_CAS */
     /* Check if we are already watching for this key */
-    listRewind(clients,&li);
+    listRewind(clients,&li); // 初始化一个从头遍历链表的迭代器 li
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
 
+        // 若该被修改的 key 处于监听状态, 则设置标志 CLIENT_DIRTY_CAS
         c->flags |= CLIENT_DIRTY_CAS;
     }
 }
@@ -343,9 +353,12 @@ void touchWatchedKeysOnFlush(int dbid) {
     }
 }
 
+// 格式: watch key [key ...]
+// 说明: 监听指定的 key, 只有当指定的 key 没有变化时该连接上的事务才会执行.
 void watchCommand(client *c) {
     int j;
 
+    // 不允许在事务操作中执行 watch 命令
     if (c->flags & CLIENT_MULTI) {
         addReplyError(c,"WATCH inside MULTI is not allowed");
         return;
@@ -355,6 +368,8 @@ void watchCommand(client *c) {
     addReply(c,shared.ok);
 }
 
+// 格式: unwatch
+// 说明: 不再监听该连接上 watch 指定的所有 key.
 void unwatchCommand(client *c) {
     unwatchAllKeys(c);
     c->flags &= (~CLIENT_DIRTY_CAS);

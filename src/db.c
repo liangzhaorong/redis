@@ -283,10 +283,11 @@ robj *dbRandomKey(redisDb *db) {
 }
 
 /* Delete a key, value, and associated expiration entry if any, from the DB */
+// 同步删除 key、value、过期字典里对应的 key(如果有), 如果是集群还会删除 key 与 slot(槽位)的对应关系
 int dbSyncDelete(redisDb *db, robj *key) {
     /* Deleting an entry from the expires dict will not free the sds of
      * the key, because it is shared with the main dictionary. */
-    if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr);
+    if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr); // 删除过期字典中的 key
     if (dictDelete(db->dict,key->ptr) == DICT_OK) {
         if (server.cluster_enabled) slotToKeyDel(key);
         return 1;
@@ -484,7 +485,7 @@ void delGenericCommand(client *c, int lazy) {
     int numdel = 0, j;
 
     for (j = 1; j < c->argc; j++) {
-        expireIfNeeded(c->db,c->argv[j]);
+        expireIfNeeded(c->db,c->argv[j]); // 检测该 key 是否过期
         int deleted  = lazy ? dbAsyncDelete(c->db,c->argv[j]) :
                               dbSyncDelete(c->db,c->argv[j]);
         if (deleted) {
@@ -498,10 +499,14 @@ void delGenericCommand(client *c, int lazy) {
     addReplyLongLong(c,numdel);
 }
 
+// del: 同步删除一个或多个 key, 因为是同步删除, 所以在删除大 key 时可能会阻塞服务器
+// 格式:    del key [key ...]
 void delCommand(client *c) {
     delGenericCommand(c,0);
 }
 
+// unlink: 以异步方式删除 key, 这可避免 del 删除大 key 的问题, unlink 在删除时会判断删除
+// 所需的工作量, 以此决定使用同步还是异步的删除(另一个线程中进行内存回收, 不会阻塞当前线程)
 void unlinkCommand(client *c) {
     delGenericCommand(c,1);
 }
@@ -548,6 +553,10 @@ void randomkeyCommand(client *c) {
     decrRefCount(key);
 }
 
+// keys 命令: 查找符合模式的键
+// 格式:   keys pattern
+// keys 命令匹配合适的 key 并一次性返回, 如果匹配的键较多, 则可能阻塞服务器, 
+// 因此该命令一般禁止在线上使用.
 void keysCommand(client *c) {
     dictIterator *di;
     dictEntry *de;
@@ -556,15 +565,16 @@ void keysCommand(client *c) {
     unsigned long numkeys = 0;
     void *replylen = addDeferredMultiBulkLength(c);
 
-    di = dictGetSafeIterator(c->db->dict);
-    allkeys = (pattern[0] == '*' && pattern[1] == '\0');
-    while((de = dictNext(di)) != NULL) {
+    di = dictGetSafeIterator(c->db->dict); // 将数据库键空间作为参数, 初始化安全迭代器
+    allkeys = (pattern[0] == '*' && pattern[1] == '\0'); // 表示请求命令是否为 "keys *", 即获取数据库中所有的 key
+    while((de = dictNext(di)) != NULL) { // 遍历数据库键空间
         sds key = dictGetKey(de);
         robj *keyobj;
 
+        // 判断 key 是否与正则表达式匹配, 若匹配且 key 没有过期则在回复给客户端的内容中记录
         if (allkeys || stringmatchlen(pattern,plen,key,sdslen(key),0)) {
             keyobj = createStringObject(key,sdslen(key));
-            if (!keyIsExpired(c->db,keyobj)) {
+            if (!keyIsExpired(c->db,keyobj)) { // key 未过期, 过期则删除
                 addReplyBulk(c,keyobj);
                 numkeys++;
             }
@@ -638,7 +648,7 @@ int parseScanCursorOrReply(client *c, robj *o, unsigned long *cursor) {
  * of every element on the Hash. */
 void scanGenericCommand(client *c, robj *o, unsigned long cursor) {
     int i, j;
-    list *keys = listCreate();
+    list *keys = listCreate(); // 创建一个双向链表, 用于存储 key
     listNode *node, *nextnode;
     long count = 10;
     sds pat = NULL;
@@ -656,6 +666,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long cursor) {
     /* Step 1: Parse options. */
     while (i < c->argc) {
         j = c->argc - i;
+        // 解析 count 参数
         if (!strcasecmp(c->argv[i]->ptr, "count") && j >= 2) {
             if (getLongFromObjectOrReply(c, c->argv[i+1], &count, NULL)
                 != C_OK)
@@ -669,6 +680,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long cursor) {
             }
 
             i += 2;
+        // 解析 match 参数
         } else if (!strcasecmp(c->argv[i]->ptr, "match") && j >= 2) {
             pat = c->argv[i+1]->ptr;
             patlen = sdslen(pat);
@@ -816,9 +828,14 @@ cleanup:
     listRelease(keys);
 }
 
-/* The SCAN command completely relies on scanGenericCommand. */
+// scan: 命令可以遍历数据库中几乎所有的键, 并且不用担心阻塞服务器.
+// 格式:   scan cursor [MATCH pattern] [COUNT count]
+// scan 命令和 hscan、sscan、zscan 命令都用于增量迭代, 每次只返回少量数据,
+// 不会有像 keys 命令阻塞服务器的隐患.
+// 注意: 迭代都是以 "桶" 为单位的, 所以有时候因为 Hash 冲突的原因, scan 会多返回一些数据.
 void scanCommand(client *c) {
     unsigned long cursor;
+    // 解析命令行游标参数
     if (parseScanCursorOrReply(c,c->argv[1],&cursor) == C_ERR) return;
     scanGenericCommand(c,NULL,cursor);
 }

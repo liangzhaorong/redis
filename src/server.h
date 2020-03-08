@@ -685,10 +685,8 @@ typedef struct clientReplyBlock {
  * by integers from 0 (the default database) up to the max configured
  * database. The database number is the 'id' field in the structure. */
 typedef struct redisDb {
-    // 存储数据库所有键值对
-    dict *dict;                 /* The keyspace for this DB */
-    // 存储键的过期时间
-    dict *expires;              /* Timeout of keys with a timeout set */
+    dict *dict;                 // 存储数据库所有键值对
+    dict *expires;              // 存储键的过期时间
     // 使用命令 BLPOP 阻塞获取列表元素时, 如果链表为空, 会阻塞客户端, 同时将此列表
     // 键记录到 blocking_keys; 当使用命令 PUSH 向列表添加元素时, 会从字典 blocking_keys
     // 中查找该列表键, 如果找到说明有客户端正阻塞等待获取此列表键, 于是将此列表键记录到
@@ -702,19 +700,19 @@ typedef struct redisDb {
     // 服务器接收到写命令时, 会从字典 watched_keys 中查找该数据键, 如果找到说明有客户端
     // 正在监控此数据键, 于是标记客户端对象为 dirty; 待 Redis 服务器接收到客户端 exec 命令
     // 时, 如果客户端带有 dirty 标记, 则会拒绝执行事务.
+    //
+    // 该哈希表中存储的键为监听的 key, 对应的值为 client 双向链表, 即表示对应的客户端在监听该 key
     dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
-    // 数据库序号, 默认情况下 Redis 有 16 个数据库, id 序号为 0~15
-    int id;                     /* Database ID */
-    // 存储数据库对象的平均 TTL, 用于统计
-    long long avg_ttl;          /* Average TTL, just for stats */
-    list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
+    int id;                     // 数据库序号, 默认情况下 Redis 有 16 个数据库, id 序号为 0~15
+    long long avg_ttl;          // 存储数据库对象的平均 TTL, 用于统计
+    list *defrag_later;         // 逐渐尝试逐个碎片整理的 key 列表
 } redisDb;
 
 /* Client MULTI/EXEC state */
 typedef struct multiCmd {
-    robj **argv;
-    int argc;
-    struct redisCommand *cmd;
+    robj **argv;              // 命令的参数
+    int argc;                 // 该命令的参数个数
+    struct redisCommand *cmd; // 命令
 } multiCmd;
 
 typedef struct multiState {
@@ -824,11 +822,11 @@ typedef struct client {
     int slave_listening_port; /* As configured with: SLAVECONF listening-port */
     char slave_ip[NET_IP_STR_LEN]; /* Optionally given by REPLCONF ip-address */
     int slave_capa;         /* Slave capabilities: SLAVE_CAPA_* bitwise OR. */
-    multiState mstate;      /* MULTI/EXEC state */
+    multiState mstate;      // 存放执行 MULTI~EXEC 间的命令的队列, 按顺序存放命令
     int btype;              /* Type of blocking op if CLIENT_BLOCKED. */
     blockingState bpop;     /* blocking state */
     long long woff;         /* Last write global replication offset. */
-    list *watched_keys;     /* Keys WATCHED for MULTI/EXEC CAS */
+    list *watched_keys;     // watched_keys 链表中的每个节点会保存监听的 key 以及该 key 属于哪个 db
     dict *pubsub_channels;  /* channels a client is interested in (SUBSCRIBE) */
     list *pubsub_patterns;  /* patterns a client is interested in (SUBSCRIBE) */
     sds peerid;             /* Cached peer ID. */
@@ -1756,10 +1754,10 @@ void receiveChildInfo(void);
 #define ZADD_XX (1<<2)      /* Only touch elements already existing. */
 
 /* Output flags. */
-#define ZADD_NOP (1<<3)     /* Operation not performed because of conditionals.*/
-#define ZADD_NAN (1<<4)     /* Only touch elements already existing. */
-#define ZADD_ADDED (1<<5)   /* The element was new and was added. */
-#define ZADD_UPDATED (1<<6) /* The element already existed, score updated. */
+#define ZADD_NOP (1<<3)     // 因为参数或条件未执行的操作
+#define ZADD_NAN (1<<4)     // 只接触已经存在的元素
+#define ZADD_ADDED (1<<5)   // 元素是新添加的
+#define ZADD_UPDATED (1<<6) // 更新已经存在的元素
 
 /* Flags only used by the ZADD command but not by zsetAdd() API: */
 #define ZADD_CH (1<<16)      /* Return num of elements added or updated. */

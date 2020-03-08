@@ -1360,6 +1360,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
     if (zobj->encoding == OBJ_ENCODING_ZIPLIST) {
         unsigned char *eptr;
 
+        // 如果元素存在, 则更新
         if ((eptr = zzlFind(zobj->ptr,ele,&curscore)) != NULL) {
             /* NX? Return, same element already exists. */
             // 带有 NX 选项下, 仅会向有序集合中添加新成员, 而不会对已有的成员进行更新
@@ -1380,6 +1381,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
 
             /* Remove and re-insert when score changed. */
             if (score != curscore) {
+                // 删除后重新插入
                 zobj->ptr = zzlDelete(zobj->ptr,eptr);
                 zobj->ptr = zzlInsert(zobj->ptr,ele,score);
                 *flags |= ZADD_UPDATED;
@@ -1413,6 +1415,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
         zskiplistNode *znode;
         dictEntry *de;
 
+        // 先在 dict 中查找元素
         de = dictFind(zs->dict,ele);
         if (de != NULL) {
             /* NX? Return, same element already exists. */
@@ -1442,7 +1445,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
                 *flags |= ZADD_UPDATED;
             }
             return 1;
-        } else if (!xx) {
+        } else if (!xx) { // 在 dict 中不存在, 则直接插入跳表
             ele = sdsdup(ele);
             znode = zslInsert(zs->zsl,score,ele);
             serverAssert(dictAdd(zs->dict,ele,&znode->score) == DICT_OK);
@@ -1592,6 +1595,7 @@ void zaddGenericCommand(client *c, int flags) {
     // 定位 zadd 命令中第一个 'score member' 对的索引位置
     scoreidx = 2;
     while(scoreidx < c->argc) {
+        // 解析 NX|XX|CH 等参数
         char *opt = c->argv[scoreidx]->ptr;
         if (!strcasecmp(opt,"nx")) flags |= ZADD_NX;
         else if (!strcasecmp(opt,"xx")) flags |= ZADD_XX;
@@ -1658,12 +1662,14 @@ void zaddGenericCommand(client *c, int flags) {
         // 将键值添加到数据库中
         dbAdd(c->db,key,zobj);
     } else {
+        // key 存在, 则判断是否为有序集合
         if (zobj->type != OBJ_ZSET) {
             addReply(c,shared.wrongtypeerr);
             goto cleanup;
         }
     }
 
+    // 循环遍历 element 的个数, 将 element 和 score 存入到 ziplist 或 skiplist 中
     for (j = 0; j < elements; j++) {
         double newscore;
         score = scores[j]; // 获取 score
@@ -1703,14 +1709,30 @@ cleanup:
     }
 }
 
+// zadd key [NX|XX] [CH] [INCR] score member [score member ...]
+// 将一个或多个 member 元素及其分值 score 加入到有序集合对应的 key 中. 其中
+// 分值 score 可以是整数值或双精度浮点数.
+//   - XX: 只更新已经存在的元素, 不添加元素
+//   - NX: 不更新已经存在的元素, 总是添加新的元素
+//   - CH: 将返回值从添加的新元素数量修改为更改的元素总数
+//   - INCR: 当指定此选项时, zadd 的行为与 zincrby 类似
+// 注意: 当 key 存在但对应的类型不是有序集时, 会返回一个错误. 如果某个 member 已经是有序集的成员,
+// 那么更新这个 member 的 score 值, 并通过重新插入这个 member 元素, 来保证该 member 在正确的位置上.
 void zaddCommand(client *c) {
     zaddGenericCommand(c,ZADD_NONE);
 }
 
+// 格式: zincrby key increment member
+// 说明: 在有序集合 key 的 member 的分值上增加 increment.
+// 注意: increment 可以是负数, 相当于减去相应的值; 当 key 不是有序集合时, 会返回一个错误; 
+//       当 key 不存在时, 或者 member 不在 key 中时, 等同于 zadd key increment member.
 void zincrbyCommand(client *c) {
     zaddGenericCommand(c,ZADD_INCR);
 }
 
+// zrem key member [member ...]
+// 删除有序集合 key 中的一个或多个 member
+// 注意: 不存在的 member 将会被忽略; 当 key 存在但不是有序集合时, 会返回一个错误.
 void zremCommand(client *c) {
     robj *key = c->argv[1];
     robj *zobj;
@@ -2769,6 +2791,8 @@ void zrevrangebyscoreCommand(client *c) {
     genericZrangebyscoreCommand(c,1);
 }
 
+// 格式: zcount key min max
+// 说明: 返回有序集 key 中 score 值在 [min, max] 区间的成员的数量.
 void zcountCommand(client *c) {
     robj *key = c->argv[1];
     robj *zobj;
@@ -3113,6 +3137,9 @@ void zrevrangebylexCommand(client *c) {
     genericZrangebylexCommand(c,1);
 }
 
+// 格式: zcard key
+// 说明: 获取有序集合 key 中的基数.
+// 注意: 不存在的 key, 返回 0.
 void zcardCommand(client *c) {
     robj *key = c->argv[1];
     robj *zobj;

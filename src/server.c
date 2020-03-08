@@ -2728,6 +2728,7 @@ int processCommand(client *c) {
     }
 
     /* Only allow SUBSCRIBE and UNSUBSCRIBE in the context of Pub/Sub */
+    // 在 pub/sub 模式下, 客户端仅可以执行 ping/subscribe/unsubscribe/psubscribe/punsubscribe 等命令
     if (c->flags & CLIENT_PUBSUB &&
         c->cmd->proc != pingCommand &&
         c->cmd->proc != subscribeCommand &&

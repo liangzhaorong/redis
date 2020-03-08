@@ -827,8 +827,8 @@ typedef struct client {
     blockingState bpop;     /* blocking state */
     long long woff;         /* Last write global replication offset. */
     list *watched_keys;     // watched_keys 链表中的每个节点会保存监听的 key 以及该 key 属于哪个 db
-    dict *pubsub_channels;  /* channels a client is interested in (SUBSCRIBE) */
-    list *pubsub_patterns;  /* patterns a client is interested in (SUBSCRIBE) */
+    dict *pubsub_channels;  // key 为订阅的 channel 的值, 而 value 为 NULL
+    list *pubsub_patterns;  // 链表, 节点值为一个个 pubsubPattern 结构体
     sds peerid;             /* Cached peer ID. */
     listNode *client_list_node; /* list node in client list */
 
@@ -1320,7 +1320,7 @@ struct redisServer {
     int daylight_active;    /* Currently in daylight saving time. */
     long long mstime;   /* Like 'unixtime' but with milliseconds resolution. */
     /* Pubsub */
-    dict *pubsub_channels;  /* Map channels to list of subscribed clients */
+    dict *pubsub_channels;  // key 为订阅的 channel 的值, value 为订阅该 channel 的 clients 链表
     list *pubsub_patterns;  /* A list of pubsub_patterns */
     int notify_keyspace_events; /* Events to propagate via Pub/Sub. This is an
                                    xor of NOTIFY_... flags. */
@@ -1385,8 +1385,8 @@ struct redisServer {
 };
 
 typedef struct pubsubPattern {
-    client *client;
-    robj *pattern;
+    client *client; // 订阅该模式的客户端
+    robj *pattern;  // 模式结构体
 } pubsubPattern;
 
 typedef void redisCommandProc(client *c);

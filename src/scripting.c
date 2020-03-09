@@ -359,6 +359,7 @@ int luaRedisGenericCommand(lua_State *lua, int raise_error) {
     static int inuse = 0;   /* Recursive calls detection. */
 
     /* Reflect MULTI state */
+    // 校验是否开启事务
     if (server.lua_multi_emitted || (server.lua_caller->flags & CLIENT_MULTI)) {
         c->flags |= CLIENT_MULTI;
     } else {
@@ -369,6 +370,7 @@ int luaRedisGenericCommand(lua_State *lua, int raise_error) {
      * to luaRedisGenericCommand(), which normally should never happen.
      * To make this function reentrant is futile and makes it slower, but
      * we should at least detect such a misuse, and abort. */
+    // 检测是否递归调用该函数
     if (inuse) {
         char *recursion_warning =
             "luaRedisGenericCommand() recursive call detected. "
@@ -925,7 +927,10 @@ void scriptingInit(int setup) {
         ldbInit();
     }
 
+    // 加载 Lua 库, 其中包含 Lua 标准库 (base、table、string、math 等)和其他非标准库
+    // (struct、cjson、cmsgpack 等)
     luaLoadLibraries(lua);
+    // 为了安全执行 Lua 代码, 这里移除了 loadfile 和 dofile 函数, 禁止文件读写操作
     luaRemoveUnsupportedFunctions(lua);
 
     /* Initialize a dictionary we use to map SHAs to scripts.
@@ -934,20 +939,28 @@ void scriptingInit(int setup) {
     server.lua_scripts = dictCreate(&shaScriptObjectDictType,NULL);
     server.lua_scripts_mem = 0;
 
-    /* Register the redis commands table and fields */
+    // 注册 Redis 命令表和字段, 并将 Redis 设置为全局变量
     lua_newtable(lua);
 
-    /* redis.call */
+    /* redis.call(cmd, args...):
+     * Lua 代码中调用 Redis 命令, 出错时将引发 Lua 错误, 该错误反过来会强制
+     * eval 向命令调用者返回错误.
+     */
     lua_pushstring(lua,"call");
     lua_pushcfunction(lua,luaRedisCallCommand);
     lua_settable(lua,-3);
 
-    /* redis.pcall */
+    /* redis.pcall(cmd, args...):
+     * 同 redis.call, 出错时将捕获错误并返回表示错误的 Lua 表
+     */
     lua_pushstring(lua,"pcall");
     lua_pushcfunction(lua,luaRedisPCallCommand);
     lua_settable(lua,-3);
 
-    /* redis.log and log levels. */
+    /* redis.log(loglevel, message):
+     * redis.log 为日志函数, 日志级别
+     * redis.LOG_DEBUG、redis.LOG_VERBOSE、redis.LOG_NOTICE、redis.LOG_WARNING
+     */
     lua_pushstring(lua,"log");
     lua_pushcfunction(lua,luaLogCommand);
     lua_settable(lua,-3);
@@ -968,12 +981,21 @@ void scriptingInit(int setup) {
     lua_pushnumber(lua,LL_WARNING);
     lua_settable(lua,-3);
 
-    /* redis.sha1hex */
+    /* redis.sha1hex(string):
+     * 计算 string 的 sha1 摘要
+     */
     lua_pushstring(lua, "sha1hex");
     lua_pushcfunction(lua, luaRedisSha1hexCommand);
     lua_settable(lua, -3);
 
-    /* redis.error_reply and redis.status_reply */
+    /* redis.error_reply(error_string):
+     * 返回错误回复. 此函数返回只包含 err 字段的表. 下面的代码效果相同:
+     * return {err="My Error"}
+     * return redis.error_reply("My Error")
+     *
+     * redis.status_reply(status_string):
+     * 返回状态回复. 此函数返回只包含 ok 字段的表.
+     */
     lua_pushstring(lua, "error_reply");
     lua_pushcfunction(lua, luaRedisErrorReplyCommand);
     lua_settable(lua, -3);
@@ -981,12 +1003,24 @@ void scriptingInit(int setup) {
     lua_pushcfunction(lua, luaRedisStatusReplyCommand);
     lua_settable(lua, -3);
 
-    /* redis.replicate_commands */
+    /* redis.replicate_commands():
+     * 启用脚本效果复制, 需要在脚本执行任何写操作前调用, Redis 5.0 默认为脚本效果复制
+     * (只复制脚本生成的单个写入命令, 而不是复制整个脚本)
+     */
     lua_pushstring(lua, "replicate_commands");
     lua_pushcfunction(lua, luaRedisReplicateCommandsCommand);
     lua_settable(lua, -3);
 
-    /* redis.set_repl and associated flags. */
+    /* redis.set_repl(redis.REPL_ALL):
+     * 该命令仅在启用脚本效果复制时有效, 并且能够控制脚本复制引擎. 如果在禁用脚本
+     * 效果复制时调用, 则调用该命令并引发错误.
+     * 复制参数:
+     *   redis.REPL_NONE: 不需要复制
+     *   redis.REPL_AOF: 仅复制到 AOF
+     *   redis.REPL_SLAVE: 用于向后兼容, 同 REPL_REPLICA
+     *   redis.REPL_REPLICA: 仅复制到副本(Redis 版本号 >= 5)
+     *   redis.REPL_ALL: 复制到 AOF 和副本
+     */
     lua_pushstring(lua,"set_repl");
     lua_pushcfunction(lua,luaRedisSetReplCommand);
     lua_settable(lua,-3);
@@ -1011,12 +1045,17 @@ void scriptingInit(int setup) {
     lua_pushnumber(lua,PROPAGATE_AOF|PROPAGATE_REPL);
     lua_settable(lua,-3);
 
-    /* redis.breakpoint */
+    /* redis.breakpoint:
+     * 动态断点, 如:
+     *   if counter > 10 then redis.breakpoint() end
+     */
     lua_pushstring(lua,"breakpoint");
     lua_pushcfunction(lua,luaRedisBreakpointCommand);
     lua_settable(lua,-3);
 
-    /* redis.debug */
+    /* redis.debug():
+     * 在控制台中打印信息, 必须是调试器模式, 否则没有任何反馈
+     */
     lua_pushstring(lua,"debug");
     lua_pushcfunction(lua,luaRedisDebugCommand);
     lua_settable(lua,-3);
@@ -1027,6 +1066,8 @@ void scriptingInit(int setup) {
     /* Replace math.random and math.randomseed with our implementations. */
     lua_getglobal(lua,"math");
 
+    // 用 Redis 实现的随机函数替换 Lua 随机函数(math.random 和 math.randomseed),
+    // 在不同的机器上, Redis 都保证具有相同的输出, 避免数据不一致问题
     lua_pushstring(lua,"random");
     lua_pushcfunction(lua,redis_math_random);
     lua_settable(lua,-3);
@@ -1037,6 +1078,8 @@ void scriptingInit(int setup) {
 
     lua_setglobal(lua,"math");
 
+    // 同样是为了避免数据不一致问题, 而添加的排序辅助函数(__redis__compare_helper),
+    // 用于需要排序的命令(命令标志类型含 S 的命令)
     /* Add a helper function that we use to sort the multi bulk output of non
      * deterministic commands, when containing 'false' elements. */
     {
@@ -1049,6 +1092,8 @@ void scriptingInit(int setup) {
         lua_pcall(lua,0,0,0);
     }
 
+    // 添加用于 pcall 错误报告的辅助函数(__redis__err__handler), 禁用 Lua
+    // 全局变量, 试图读写全局变量将会出错.
     /* Add a helper function we use for pcall error reporting.
      * Note that when the error is in the C function we want to report the
      * information about the caller, that's what makes sense from the point
@@ -1084,6 +1129,7 @@ void scriptingInit(int setup) {
      * to global variables. */
     scriptingEnableGlobalsProtection(lua);
 
+    // 将 Lua 环境变量挂载服务器 Lua 属性下
     server.lua = lua;
 }
 

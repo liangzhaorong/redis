@@ -1077,18 +1077,22 @@ int rdbSaveInfoAuxFields(rio *rdb, int flags, rdbSaveInfo *rsi) {
     /* Add a few fields about the state when the RDB was created. */
     if (rdbSaveAuxFieldStrStr(rdb,"redis-ver",REDIS_VERSION) == -1) return -1;
     if (rdbSaveAuxFieldStrInt(rdb,"redis-bits",redis_bits) == -1) return -1;
-    if (rdbSaveAuxFieldStrInt(rdb,"ctime",time(NULL)) == -1) return -1;
-    if (rdbSaveAuxFieldStrInt(rdb,"used-mem",zmalloc_used_memory()) == -1) return -1;
+    if (rdbSaveAuxFieldStrInt(rdb,"ctime",time(NULL)) == -1) return -1; // 当前时间戳
+    if (rdbSaveAuxFieldStrInt(rdb,"used-mem",zmalloc_used_memory()) == -1) return -1; // Redis 占用内存
 
     /* Handle saving options that generate aux fields. */
     if (rsi) {
         if (rdbSaveAuxFieldStrInt(rdb,"repl-stream-db",rsi->repl_stream_db)
             == -1) return -1;
+        // Redis 服务器关闭时, 将主从复制信息(复制的主服务器 RUN_ID 与复制偏移量)作为
+        // 辅助字段存储在 RDB 文件中; Redis 服务器启动加载 RDB 文件时, 恢复主从复制信息,
+        // 重新同步主服务器时携带.
         if (rdbSaveAuxFieldStrStr(rdb,"repl-id",server.replid)
             == -1) return -1;
         if (rdbSaveAuxFieldStrInt(rdb,"repl-offset",server.master_repl_offset)
             == -1) return -1;
     }
+    // aof-preamble: 是否开启 AOF/RDB 混合持久化
     if (rdbSaveAuxFieldStrInt(rdb,"aof-preamble",aof_preamble) == -1) return -1;
     return 1;
 }
@@ -1150,8 +1154,11 @@ int rdbSaveRio(rio *rdb, int *error, int flags, rdbSaveInfo *rsi) {
 
     if (server.rdb_checksum)
         rdb->update_cksum = rioGenericUpdateChecksum;
+    // RDB 文件的头部固定 5 字节 "REDIS" 字符串, 接着 4 字节的 RDB 版本号
+    // 当前 RDB 版本号为 9, 填充为 4 字节后为 0008
     snprintf(magic,sizeof(magic),"REDIS%04d",RDB_VERSION);
     if (rdbWriteRaw(rdb,magic,9) == -1) goto werr;
+    // 辅助字段
     if (rdbSaveInfoAuxFields(rdb,flags,rsi) == -1) goto werr;
     if (rdbSaveModulesAux(rdb, REDISMODULE_AUX_BEFORE_RDB) == -1) goto werr;
 
@@ -1267,6 +1274,7 @@ int rdbSave(char *filename, rdbSaveInfo *rsi) {
     rio rdb;
     int error = 0;
 
+    // 以只写的方式打开一个临时文件
     snprintf(tmpfile,256,"temp-%d.rdb", (int) getpid());
     fp = fopen(tmpfile,"w");
     if (!fp) {
@@ -1338,8 +1346,8 @@ int rdbSaveBackground(char *filename, rdbSaveInfo *rsi) {
         int retval;
 
         /* Child */
-        closeListeningSockets(0);
-        redisSetProcTitle("redis-rdb-bgsave");
+        closeListeningSockets(0);              // 子进程不需要监听任何端口
+        redisSetProcTitle("redis-rdb-bgsave"); // 设置子进程名称
         retval = rdbSave(filename,rsi);
         if (retval == C_OK) {
             size_t private_dirty = zmalloc_get_private_dirty(-1);
@@ -2467,6 +2475,11 @@ void saveCommand(client *c) {
 }
 
 /* BGSAVE [SCHEDULE] */
+// BGSAVE 执行流程:
+// 1. 创建一个子进程
+// 2. 子进程执行 SAVE 命令, 创建新的 RDB 文件
+// 3. RDB 文件创建完毕后, 子进程退出并通知 Redis 服务器进程(父进程)新 RDB 文件已经完成
+// 4. Redis 服务器进程使用新 RDB 文件替换已有的 RDB 文件
 void bgsaveCommand(client *c) {
     int schedule = 0;
 

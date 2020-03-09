@@ -1152,7 +1152,11 @@ struct redisServer {
     clientBufferLimitsConfig client_obuf_limits[CLIENT_TYPE_OBUF_COUNT];
     /* AOF persistence */
     int aof_state;                  // 是否开启了 AOF 功能: AOF_(ON|OFF|WAIT_REWRITE)
-    int aof_fsync;                  /* Kind of fsync() policy */
+    int aof_fsync;                  // fsync() 是一个阻塞且缓慢的操作, 可通过 appendfsync 配置
+                                    // 控制执行 fsync 的频次. 有如下 3 种模式:
+                                    //   - no: 不执行 fsync, 由操作系统负责数据的刷盘. 数据安全性最低但 Redis 性能最高
+                                    //   - always: 每执行一次写入就会执行一次 fsync. 数据安全性最高但会导致 Redis 性能降低
+                                    //   - everysec: 每 1 秒执行一次 fsync 操作
     char *aof_filename;             /* Name of the AOF file */
     int aof_no_fsync_on_rewrite;    /* Don't fsync if a rewrite is in prog. */
     int aof_rewrite_perc;           /* Rewrite AOF if % growth is > M and... */
@@ -1196,9 +1200,9 @@ struct redisServer {
     pid_t rdb_child_pid;            // 是否正在后台执行 RDB 保存任务
     struct saveparam *saveparams;   /* Save points array for RDB */
     int saveparamslen;              /* Number of saving points */
-    char *rdb_filename;             /* Name of RDB file */
-    int rdb_compression;            /* Use compression in RDB? */
-    int rdb_checksum;               /* Use RDB checksum? */
+    char *rdb_filename;             // RDB 文件名
+    int rdb_compression;            // 执行 RDB 快照时是否将 string 类型的数据进行 LZF 压缩
+    int rdb_checksum;               // 是否开启 RDB 文件内容的校验
     time_t lastsave;                // 最后一次执行 RDB 保存任务的时间
     time_t lastbgsave_try;          /* Unix time of last attempted bgsave */
     time_t rdb_save_time_last;      // 最后一次执行 RDB 保存任务消耗的时间
@@ -1206,7 +1210,8 @@ struct redisServer {
     int rdb_bgsave_scheduled;       /* BGSAVE when possible if true. */
     int rdb_child_type;             /* Type of save by active child. */
     int lastbgsave_status;          // 最后一次执行 RDB 保存任务的状态: C_OK/C_ERR
-    int stop_writes_on_bgsave_err;  /* Don't allow writes if can't BGSAVE */
+    int stop_writes_on_bgsave_err;  // 开启该参数后, 如果开启了 RDB 快照(即配置了 save 指令), 
+                                    // 并且最近一次快照执行失败, 则 Redis 将停止接收写相关的请求
     int rdb_pipe_write_result_to_parent; /* RDB pipes used to return the state */
     int rdb_pipe_read_result_from_child; /* of each slave in diskless SYNC. */
     /* Pipe and data structures for child -> parent info sharing. */
@@ -1224,34 +1229,50 @@ struct redisServer {
     char *syslog_ident;             /* Syslog ident */
     int syslog_facility;            /* Syslog facility */
     /* Replication (master) */
-    char replid[CONFIG_RUN_ID_SIZE+1];  /* My current replication ID. */
+    char replid[CONFIG_RUN_ID_SIZE+1];  // Redis 服务器的运行 ID, 长度为 CONFIG_RUN_ID_SIZE(40) 的随机字符串,
+                                        // 对于主服务器, replid 表示的是当前服务器的运行 ID;
+                                        // 对于从服务器, replid 表示其复制的主服务器的运行 ID.
     char replid2[CONFIG_RUN_ID_SIZE+1]; /* replid inherited from master*/
-    long long master_repl_offset;   /* My current replication offset */
+    long long master_repl_offset;   // 复制缓冲区最后一个字节的复制偏移量
     long long second_replid_offset; /* Accept offsets up to this for replid2. */
     int slaveseldb;                 /* Last SELECTed DB in replication output */
-    int repl_ping_slave_period;     /* Master pings the slave every N seconds */
-    char *repl_backlog;             /* Replication backlog for partial syncs */
-    long long repl_backlog_size;    /* Backlog circular buffer size */
-    long long repl_backlog_histlen; /* Backlog actual data length */
-    long long repl_backlog_idx;     /* Backlog circular buffer current offset,
-                                       that is the next byte will'll write to.*/
-    long long repl_backlog_off;     /* Replication "master offset" of first
-                                       byte in the replication backlog buffer.*/
+    int repl_ping_slave_period;     // 主服务器和从服务器之间是通过 TCP 长连接交互数据的, 就必然需要周期性
+                                    // 地发送心跳包来检测连接有效性, 该字段表示发送心跳包的周期, 主服务器
+                                    // 以此周期向所有从服务器发送心跳包. 可通过配置参数 repl-ping-replica-period
+                                    // 或 repl-ping-slave-period 设置, 默认为 10.
+    char *repl_backlog;             // 复制缓冲区, 用于缓存主服务器已执行且待发送给从服务器的命令请求;
+                                    // 缓冲区大小由字段 repl_backlog_size 指定, 其可通过配置参数 
+                                    // repl-backlog-size 设置, 默认 1MB.
+    long long repl_backlog_size;    // 复制缓冲区的大小
+    long long repl_backlog_histlen; // 复制缓冲区中存储的有效命令请求数据长度
+    long long repl_backlog_idx;     // 复制缓冲区中存储的命令请求最后一个字节索引位置, 即向复制缓冲区写入
+                                    // 数据时会从该索引位置开始.
+    long long repl_backlog_off;     // 复制缓冲区中第一个字节的复制偏移量
     time_t repl_backlog_time_limit; /* Time without slaves after the backlog
                                        gets released. */
     time_t repl_no_slaves_since;    /* We have no slaves since that time.
                                        Only valid if server.slaves len is 0. */
-    int repl_min_slaves_to_write;   /* Min number of slaves to write. */
+    int repl_min_slaves_to_write;   // 该字段表示当有效从服务器的数目小于该值时, 主服务器会拒绝执行写命令
     int repl_min_slaves_max_lag;    /* Max lag of <count> slaves to write. */
-    int repl_good_slaves_count;     /* Number of slaves with lag <= max_lag. */
+    int repl_good_slaves_count;     // 当前有效从服务器的数目. 什么样的从服务器是有效呢? 主从服务器之间是
+                                    // 通过 TCP 长连接交互数据的, 并且会发送心跳包来检测连接有效性; 主服务
+                                    // 器会记录每个从服务器上次心跳检测成功的时间 repl_ack_time, 并且定时
+                                    // 检测当前时间距离 repl_ack_time 是否尝过一定超时门限, 如果超过则认为
+                                    // 从服务器处于失效状态. 字段 repl_min_slaves_max_lag 存储的就是该超时
+                                    // 门限, 可通过配置参数 min-slaves-max-lag 或 min-replicas-max-lag 设置,
+                                    // 默认为 10, 单位秒
     int repl_diskless_sync;         /* Send RDB to slaves sockets directly. */
     int repl_diskless_sync_delay;   /* Delay to start a diskless repl BGSAVE. */
     /* Replication (slave) */
-    char *masterauth;               /* AUTH with this password with master */
-    char *masterhost;               // 存储当前 Redis 服务器的 master 服务器的域名, 如果为 NULL 说明当前服务器不是某个 Redis 服务器的 slaver
-    int masterport;                 /* Port of master */
+    char *masterauth;               // 当主服务器配置了 "requirepass password" 时, 即表示从服务器必须通过
+                                    // 密码认证才能同步主服务器数据. 同样的需要在从服务器配置 
+                                    // "masterauth <master-password>", 用于设置请求同步主服务器时的认证密码
+    char *masterhost;               // 存储当前 Redis 服务器的 master 服务器的域名, 如果为 NULL 说明
+                                    // 当前服务器不是某个 Redis 服务器的从服务器(slaver)
+    int masterport;                 // 主服务器的端口号
     int repl_timeout;               /* Timeout after N seconds of master idle */
-    client *master;     /* Client that is master for this slave */
+    client *master;                 // 当主从服务器成功建立连接后, 从服务器将成为主服务器的客户端, 同样的主
+                                    // 服务器也会成为从服务器的客户端, master 即为主服务器
     client *cached_master; /* Cached master to be reused for PSYNC. */
     int repl_syncio_timeout; /* Timeout for synchronous I/O calls */
     int repl_state;          /* Replication status if the instance is a slave */
@@ -1262,8 +1283,12 @@ struct redisServer {
     int repl_transfer_fd;    /* Slave -> Master SYNC temp file descriptor */
     char *repl_transfer_tmpfile; /* Slave-> master SYNC temp file name */
     time_t repl_transfer_lastio; /* Unix time of the latest read, for timeout */
-    int repl_serve_stale_data; /* Serve stale data when link is down? */
-    int repl_slave_ro;          /* Slave is read only? */
+    int repl_serve_stale_data;      // 当主从服务器断开连接时, 该变量表示从服务器是否继续处理命令请求, 
+                                    // 可通过配置参数 slave-serve-stale-data 或 replica-serve-stale-data
+                                    // 设置, 默认为 1, 即可以继续处理命令请求.
+    int repl_slave_ro;              // 表示从服务器是否只读(不处理写命令), 可通过配置参数 slave-read-only
+                                    // 或 replica-read-only 设置, 默认为 1, 即从服务器不处理写命令请求,
+                                    // 除非该命令是主服务器发送过来的.
     int repl_slave_ignore_maxmemory;    /* If true slaves do not evict. */
     time_t repl_down_since; /* Unix time at which link with master went down */
     int repl_disable_tcp_nodelay;   /* Disable TCP_NODELAY after SYNC? */
@@ -1325,7 +1350,7 @@ struct redisServer {
     int notify_keyspace_events; /* Events to propagate via Pub/Sub. This is an
                                    xor of NOTIFY_... flags. */
     /* Cluster */
-    int cluster_enabled;      /* Is cluster enabled? */
+    int cluster_enabled;           // 当前是否为集群模式
     mstime_t cluster_node_timeout; /* Cluster node timeout. */
     char *cluster_configfile; /* Cluster auto-generated config file name. */
     struct clusterState *cluster;  /* State of the cluster */
@@ -1343,24 +1368,21 @@ struct redisServer {
                                       native Redis Cluster features. Check the
                                       REDISMODULE_CLUSTER_FLAG_*. */
     /* Scripting */
-    lua_State *lua; /* The Lua interpreter. We use just one for all clients */
-    client *lua_client;   /* The "fake client" to query Redis from Lua */
-    client *lua_caller;   /* The client running EVAL right now, or NULL */
-    dict *lua_scripts;         /* A dictionary of SHA1 -> Lua scripts */
-    unsigned long long lua_scripts_mem;  /* Cached scripts' memory + oh */
-    mstime_t lua_time_limit;  /* Script timeout in milliseconds */
-    mstime_t lua_time_start;  /* Start time of script, milliseconds time */
-    int lua_write_dirty;  /* True if a write command was called during the
-                             execution of the current script. */
-    int lua_random_dirty; /* True if a random command was called during the
-                             execution of the current script. */
-    int lua_replicate_commands; /* True if we are doing single commands repl. */
-    int lua_multi_emitted;/* True if we already proagated MULTI. */
-    int lua_repl;         /* Script replication flags for redis.set_repl(). */
-    int lua_timedout;     /* True if we reached the time limit for script
-                             execution. */
-    int lua_kill;         /* Kill the script if true. */
-    int lua_always_replicate_commands; /* Default replication type. */
+    lua_State *lua;                      // Lua 解释器, 所有客户端共用
+    client *lua_client;                  // Lua 中向 Redis 查询的 "伪客户端"
+    client *lua_caller;                  // 正在执行脚本调用的客户端
+    dict *lua_scripts;                   // SHA1 和原始脚本的字典映射
+    unsigned long long lua_scripts_mem;  // 缓存脚本使用的内存, 单位: 字节
+    mstime_t lua_time_limit;             // 脚本超时, 单位: 毫秒
+    mstime_t lua_time_start;             // 脚本启动时间, 单位: 毫秒
+    int lua_write_dirty;                 // 脚本执行期间有调用写命令, 则为 true
+    int lua_random_dirty;                // 脚本执行期间有调用随机命令, 则为 true
+    int lua_replicate_commands;          // 如果是脚本效果复制, 则为 true
+    int lua_multi_emitted;               // 如果传播事务, 则为 true
+    int lua_repl;                        // 脚本复制标志
+    int lua_timedout;                    // 脚本执行超时, 则为 true
+    int lua_kill;                        // 杀死脚本, 则为 true
+    int lua_always_replicate_commands;   // 默认复制类型
     /* Lazy free */
     int lazyfree_lazy_eviction;
     int lazyfree_lazy_expire;

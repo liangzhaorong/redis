@@ -124,27 +124,36 @@ void freeReplicationBacklog(void) {
  * This function also increments the global replication offset stored at
  * server.master_repl_offset, because there is no case where we want to feed
  * the backlog without incrementing the offset. */
+// 向复制缓冲区中写入命令请求数据
 void feedReplicationBacklog(void *ptr, size_t len) {
     unsigned char *p = ptr;
 
+    // 缓冲区最后一个字节的复制偏移量
     server.master_repl_offset += len;
 
+    // 复制缓冲区为先进先出的循环队列
     /* This is a circular buffer, so write as much data we can at every
      * iteration and rewind the "idx" index if we reach the limit. */
     while(len) {
+        // 计算复制缓冲区中余下可写入的数据大小
         size_t thislen = server.repl_backlog_size - server.repl_backlog_idx;
+        // 余下空间充足, 则将待写入的 len 长度的数据都写入到复制缓冲区中
         if (thislen > len) thislen = len;
+        // 将数据写入到复制缓冲区中 repl_backlog_idx 索引位置处
         memcpy(server.repl_backlog+server.repl_backlog_idx,p,thislen);
         server.repl_backlog_idx += thislen;
+        // repl_backlog_idx 索引已经到达缓冲区最大位置, 需要移动到缓冲区首部
         if (server.repl_backlog_idx == server.repl_backlog_size)
             server.repl_backlog_idx = 0;
         len -= thislen;
         p += thislen;
+        // 记录缓冲区中存储的命令请求数据长度
         server.repl_backlog_histlen += thislen;
     }
+    // 缓冲区中数据量最大为缓冲区大小
     if (server.repl_backlog_histlen > server.repl_backlog_size)
         server.repl_backlog_histlen = server.repl_backlog_size;
-    /* Set the offset of the first byte we have in the backlog. */
+    // 设置缓冲区中数据第一个字节的复制偏移量
     server.repl_backlog_off = server.master_repl_offset -
                               server.repl_backlog_histlen + 1;
 }
@@ -2044,6 +2053,11 @@ void replicationHandleMasterDisconnection(void) {
      * the slaves only if we'll have to do a full resync with our master. */
 }
 
+// 格式: REPLICAOF host port
+// 说明: 将接收这个命令的 Redis 服务器设置为另一个 Redis 服务器的从服务器.
+//       host 指定主服务器的地址, port 指定主服务器的端口号.
+// 在接收到 REPLICAOF 命令后, 主从服务器将执行数据同步操作: 从服务器原有的数据将被清空,
+// 取而代之的是主服务器发送过来的数据副本. 数据同步完成后, 主从服务器将拥有相同的副本.
 void replicaofCommand(client *c) {
     /* SLAVEOF is not allowed in cluster mode as replication is automatically
      * configured using the current address of the master node. */
@@ -2066,6 +2080,7 @@ void replicaofCommand(client *c) {
     } else {
         long port;
 
+        // 当前服务器已经为从服务器
         if (c->flags & CLIENT_SLAVE)
         {
             /* If a client is already a replica they cannot run this command,
@@ -2301,6 +2316,7 @@ void replicationResurrectCachedMaster(int newfd) {
 /* This function counts the number of slaves with lag <= min-slaves-max-lag.
  * If the option is active, the server will prevent writes if there are not
  * enough connected slaves with the specified lag (or less). */
+// 进行从服务器有效性的检测
 void refreshGoodSlavesCount(void) {
     listIter li;
     listNode *ln;
@@ -2309,11 +2325,14 @@ void refreshGoodSlavesCount(void) {
     if (!server.repl_min_slaves_to_write ||
         !server.repl_min_slaves_max_lag) return;
 
+    // 遍历所有的从服务器
     listRewind(server.slaves,&li);
     while((ln = listNext(&li))) {
         client *slave = ln->value;
+        // 计算距上一次该从服务器心跳检测成功后到现在所经过的时间
         time_t lag = server.unixtime - slave->repl_ack_time;
 
+        // 上次心跳成功时间小于 repl_min_slaves_max_lag 则认为从服务器有效
         if (slave->replstate == SLAVE_STATE_ONLINE &&
             lag <= server.repl_min_slaves_max_lag) good++;
     }

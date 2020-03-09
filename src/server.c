@@ -2706,6 +2706,8 @@ int processCommand(client *c) {
 
     /* Don't accept write commands if there are not enough good slaves and
      * user configured the min-slaves-to-write option. */
+    // 当前 Redis 为主服务器下, 若当前 redis 的有效从服务器数(repl_good_slaves_count)
+    // 小于从服务器最低存活阈值(repl_min_slaves_to_write) 时, 则禁止执行写命令
     if (server.masterhost == NULL &&
         server.repl_min_slaves_to_write &&
         server.repl_min_slaves_max_lag &&
@@ -2719,6 +2721,8 @@ int processCommand(client *c) {
 
     /* Don't accept write commands if this is a read only slave. But
      * accept write commands if this is our master. */
+    // 当前为从服务器且配置了该从服务器禁止处理写命令(repl_slave_ro 为 1), 除非该写命令是 master
+    // 发送过来的, 此时禁止该从服务器执行写命令.
     if (server.masterhost && server.repl_slave_ro &&
         !(c->flags & CLIENT_MASTER) &&
         c->cmd->flags & CMD_WRITE)
@@ -2742,6 +2746,8 @@ int processCommand(client *c) {
     /* Only allow commands with flag "t", such as INFO, SLAVEOF and so on,
      * when slave-serve-stale-data is no and we are a slave with a broken
      * link with master. */
+    // 若当前为从服务器且该从服务器与主服务器断开连接时, 若配置 repl_serve_stale_data 为 0,
+    // 则表示此情况下禁止该从服务器继续处理命令请求.
     if (server.masterhost && server.repl_state != REPL_STATE_CONNECTED &&
         server.repl_serve_stale_data == 0 &&
         !(c->cmd->flags & CMD_STALE))

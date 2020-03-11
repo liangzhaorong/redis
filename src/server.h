@@ -299,24 +299,28 @@ typedef long long mstime_t; /* millisecond time type. */
 
 /* Slave replication state. Used in server.repl_state for slaves to remember
  * what to do next. */
-#define REPL_STATE_NONE 0 /* No active replication */
-#define REPL_STATE_CONNECT 1 /* Must connect to master */
-#define REPL_STATE_CONNECTING 2 /* Connecting to master */
+#define REPL_STATE_NONE 0           // 未开启主从复制功能, 当前服务器是普通的 Redis 实例
+#define REPL_STATE_CONNECT 1        // 待发起 Socket 连接主服务器
+#define REPL_STATE_CONNECTING 2     // Socket 连接成功
 /* --- Handshake states, must be ordered --- */
-#define REPL_STATE_RECEIVE_PONG 3 /* Wait for PING reply */
-#define REPL_STATE_SEND_AUTH 4 /* Send AUTH to master */
-#define REPL_STATE_RECEIVE_AUTH 5 /* Wait for AUTH reply */
-#define REPL_STATE_SEND_PORT 6 /* Send REPLCONF listening-port */
-#define REPL_STATE_RECEIVE_PORT 7 /* Wait for REPLCONF reply */
-#define REPL_STATE_SEND_IP 8 /* Send REPLCONF ip-address */
-#define REPL_STATE_RECEIVE_IP 9 /* Wait for REPLCONF reply */
-#define REPL_STATE_SEND_CAPA 10 /* Send REPLCONF capa */
-#define REPL_STATE_RECEIVE_CAPA 11 /* Wait for REPLCONF reply */
-#define REPL_STATE_SEND_PSYNC 12 /* Send PSYNC */
-#define REPL_STATE_RECEIVE_PSYNC 13 /* Wait for PSYNC reply */
+#define REPL_STATE_RECEIVE_PONG 3   // 已经发送了 PING 请求包, 并等待接收主服务器 PONG 回复
+#define REPL_STATE_SEND_AUTH 4      // 待发起密码认证
+#define REPL_STATE_RECEIVE_AUTH 5   // 已经发起了密码认证请求 "AUTH <password>", 等待接收主服务器回复
+#define REPL_STATE_SEND_PORT 6      // 待发送端口号
+#define REPL_STATE_RECEIVE_PORT 7   // 已发送端口号 "REPLCONF listening-port <port>", 等待接收主服务器回复
+#define REPL_STATE_SEND_IP 8        // 待发送 IP 地址
+#define REPL_STATE_RECEIVE_IP 9     // 已发送 IP 地址 "REPLCONF ip-address <ip>", 等待接收主服务器回复;
+                                    // 该 IP 地址与端口号用于主服务器主动建立 Socket 连接, 并向从服务器同步数据
+#define REPL_STATE_SEND_CAPA 10     // 主从复制功能进行过优化升级, 不同版本 Redis 服务器支持的能力可能不同,
+                                    // 因此从服务器需要告诉主服务器自己支持的主从复制能力, 通过命令
+                                    // "REPLCONF capa <capability>" 实现.
+#define REPL_STATE_RECEIVE_CAPA 11  // 等待接收主服务器回复
+#define REPL_STATE_SEND_PSYNC 12    // 待发送 PSYNC 命令
+#define REPL_STATE_RECEIVE_PSYNC 13 // 等待接收主服务器 PSYNC 命令的回复结果
 /* --- End of handshake states --- */
-#define REPL_STATE_TRANSFER 14 /* Receiving .rdb from master */
-#define REPL_STATE_CONNECTED 15 /* Connected to master */
+#define REPL_STATE_TRANSFER 14      // 正在接收 RDB 文件
+#define REPL_STATE_CONNECTED 15     // RDB 文件接收并载入完毕, 主从复制连接建立成功. 此时从服务器只需要等待
+                                    // 接收主服务器同步数据即可.
 
 /* State of slaves from the POV of the master. Used in client->replstate.
  * In SEND_BULK and ONLINE state the slave receives new updates
@@ -1270,19 +1274,20 @@ struct redisServer {
     char *masterhost;               // 存储当前 Redis 服务器的 master 服务器的域名, 如果为 NULL 说明
                                     // 当前服务器不是某个 Redis 服务器的从服务器(slaver)
     int masterport;                 // 主服务器的端口号
-    int repl_timeout;               /* Timeout after N seconds of master idle */
+    int repl_timeout;               // 主从服务器超时时间, 用户可通过参数 repl-timeout 配置, 默认 60s,
+                                    // 超过此时间则认为主从服务器之间的连接出现故障, 从服务器会主动断开连接
     client *master;                 // 当主从服务器成功建立连接后, 从服务器将成为主服务器的客户端, 同样的主
                                     // 服务器也会成为从服务器的客户端, master 即为主服务器
     client *cached_master; /* Cached master to be reused for PSYNC. */
     int repl_syncio_timeout; /* Timeout for synchronous I/O calls */
-    int repl_state;          /* Replication status if the instance is a slave */
+    int repl_state;                 // 表示主从复制流程的进展(从服务器状态)
     off_t repl_transfer_size; /* Size of RDB to read from master during sync. */
     off_t repl_transfer_read; /* Amount of RDB read from master during sync. */
     off_t repl_transfer_last_fsync_off; /* Offset when we fsync-ed last time. */
     int repl_transfer_s;     /* Slave -> Master SYNC socket */
     int repl_transfer_fd;    /* Slave -> Master SYNC temp file descriptor */
     char *repl_transfer_tmpfile; /* Slave-> master SYNC temp file name */
-    time_t repl_transfer_lastio; /* Unix time of the latest read, for timeout */
+    time_t repl_transfer_lastio;    // 存储主从服务器上次交互时间
     int repl_serve_stale_data;      // 当主从服务器断开连接时, 该变量表示从服务器是否继续处理命令请求, 
                                     // 可通过配置参数 slave-serve-stale-data 或 replica-serve-stale-data
                                     // 设置, 默认为 1, 即可以继续处理命令请求.

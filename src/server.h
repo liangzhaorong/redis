@@ -1297,7 +1297,10 @@ struct redisServer {
     int repl_slave_ignore_maxmemory;    /* If true slaves do not evict. */
     time_t repl_down_since; /* Unix time at which link with master went down */
     int repl_disable_tcp_nodelay;   /* Disable TCP_NODELAY after SYNC? */
-    int slave_priority;             /* Reported in INFO and used by Sentinel. */
+    int slave_priority;             // 从服务器优先级, 可通过 'replica-priority' 配置选项来设置各个从服务器
+                                    // 的优先级, 优先级较高的从服务器在 Sentinel 选择新主服务器的时候会优先
+                                    // 被选择. 默认值为 100, 这个值越小, 从服务器的优先级越高. 该值为 0 的
+                                    // 从服务器将永远不会被选为主服务器.
     int slave_announce_port;        /* Give the master this listening port. */
     char *slave_announce_ip;        /* Give the master this ip address. */
     /* The following two fields is where we store master PSYNC replid/offset

@@ -87,13 +87,14 @@ typedef struct sentinelAddr {
 #define SENTINEL_DEFAULT_DENY_SCRIPTS_RECONFIG 1
 
 /* Failover machine different states. */
-#define SENTINEL_FAILOVER_STATE_NONE 0  /* No failover in progress. */
-#define SENTINEL_FAILOVER_STATE_WAIT_START 1  /* Wait for failover_start_time*/
-#define SENTINEL_FAILOVER_STATE_SELECT_SLAVE 2 /* Select slave to promote */
-#define SENTINEL_FAILOVER_STATE_SEND_SLAVEOF_NOONE 3 /* Slave -> Master */
-#define SENTINEL_FAILOVER_STATE_WAIT_PROMOTION 4 /* Wait slave to change role */
-#define SENTINEL_FAILOVER_STATE_RECONF_SLAVES 5 /* SLAVEOF newmaster */
-#define SENTINEL_FAILOVER_STATE_UPDATE_CONFIG 6 /* Monitor promoted slave. */
+// 主从切换的状态变迁
+#define SENTINEL_FAILOVER_STATE_NONE 0               // 没有进行主从切换
+#define SENTINEL_FAILOVER_STATE_WAIT_START 1         // 等待开始进行切换(等待哨兵之间进行选主)
+#define SENTINEL_FAILOVER_STATE_SELECT_SLAVE 2       // 选择一台从服务器作为新的主服务器
+#define SENTINEL_FAILOVER_STATE_SEND_SLAVEOF_NOONE 3 // 将被选中的从服务器切换为主服务器
+#define SENTINEL_FAILOVER_STATE_WAIT_PROMOTION 4     // 等待被选中的从服务器上报状态
+#define SENTINEL_FAILOVER_STATE_RECONF_SLAVES 5      // 将其他 Slave 切换为向新的主服务器要求同步数据
+#define SENTINEL_FAILOVER_STATE_UPDATE_CONFIG 6      // 重置 Master, 将 Master 的 IP:PORT 设置为被选中从服务器的 IP:PORT
 
 #define SENTINEL_MASTER_LINK_STATUS_UP 0
 #define SENTINEL_MASTER_LINK_STATUS_DOWN 1
@@ -464,11 +465,13 @@ void initSentinelConfig(void) {
 }
 
 /* Perform the Sentinel mode initialization. */
+// 执行哨兵模式的一些初始化
 void initSentinel(void) {
     unsigned int j;
 
     /* Remove usual Redis commands from the command table, then just add
      * the SENTINEL command. */
+    // 从命令表中移除大部分通用的命令, 然后添加 SENTINEL 命令(哨兵模式下仅允许执行特定命令)
     dictEmpty(server.commands,NULL);
     for (j = 0; j < sizeof(sentinelcmds)/sizeof(sentinelcmds[0]); j++) {
         int retval;
@@ -2984,11 +2987,11 @@ int sentinelIsQuorumReachable(sentinelRedisInstance *master, int *usableptr) {
 
 void sentinelCommand(client *c) {
     if (!strcasecmp(c->argv[1]->ptr,"masters")) {
-        /* SENTINEL MASTERS */
+        /* SENTINEL MASTERS: 返回该哨兵监控的所有 Master 的相关信息 */
         if (c->argc != 2) goto numargserr;
         addReplyDictOfRedisInstances(c,sentinel.masters);
     } else if (!strcasecmp(c->argv[1]->ptr,"master")) {
-        /* SENTINEL MASTER <name> */
+        /* SENTINEL MASTER <name>: 返回指定名称 Master 的相关信息 */
         sentinelRedisInstance *ri;
 
         if (c->argc != 3) goto numargserr;
@@ -2998,7 +3001,7 @@ void sentinelCommand(client *c) {
     } else if (!strcasecmp(c->argv[1]->ptr,"slaves") ||
                !strcasecmp(c->argv[1]->ptr,"replicas"))
     {
-        /* SENTINEL REPLICAS <master-name> */
+        /* SENTINEL REPLICAS <master-name>: 返回指定名称 Master 的所有 Slave 的相关信息 */
         sentinelRedisInstance *ri;
 
         if (c->argc != 3) goto numargserr;
@@ -3006,7 +3009,9 @@ void sentinelCommand(client *c) {
             return;
         addReplyDictOfRedisInstances(c,ri->slaves);
     } else if (!strcasecmp(c->argv[1]->ptr,"sentinels")) {
-        /* SENTINEL SENTINELS <master-name> */
+        /* SENTINEL SENTINELS <master-name>
+         * 返回指定名称 Master 的所有相关哨兵的相关信息
+         */
         sentinelRedisInstance *ri;
 
         if (c->argc != 3) goto numargserr;
@@ -3015,6 +3020,8 @@ void sentinelCommand(client *c) {
         addReplyDictOfRedisInstances(c,ri->sentinels);
     } else if (!strcasecmp(c->argv[1]->ptr,"is-master-down-by-addr")) {
         /* SENTINEL IS-MASTER-DOWN-BY-ADDR <ip> <port> <current-epoch> <runid>
+         * 如果 runid 是 *, 返回由 IP 和 Port 指定的 Master 是否处于主观下线状态. 如果 runid 是某个
+         * 哨兵的 ID, 则同时会要求对该 runid 进行选举投票.
          *
          * Arguments:
          *
@@ -3068,11 +3075,13 @@ void sentinelCommand(client *c) {
         addReplyLongLong(c, (long long)leader_epoch);
         if (leader) sdsfree(leader);
     } else if (!strcasecmp(c->argv[1]->ptr,"reset")) {
-        /* SENTINEL RESET <pattern> */
+        /* SENTINEL RESET <pattern>: 重置所有该哨兵监控的匹配模式(pattern) 的 Masters(刷新状态, 重新建立各类连接) */
         if (c->argc != 3) goto numargserr;
         addReplyLongLong(c,sentinelResetMastersByPattern(c->argv[2]->ptr,SENTINEL_GENERATE_EVENT));
     } else if (!strcasecmp(c->argv[1]->ptr,"get-master-addr-by-name")) {
-        /* SENTINEL GET-MASTER-ADDR-BY-NAME <master-name> */
+        /* SENTINEL GET-MASTER-ADDR-BY-NAME <master-name>
+         * 返回指定名称的 Master 对应的 IP 和 Port
+         */
         sentinelRedisInstance *ri;
 
         if (c->argc != 3) goto numargserr;
@@ -3087,7 +3096,9 @@ void sentinelCommand(client *c) {
             addReplyBulkLongLong(c,addr->port);
         }
     } else if (!strcasecmp(c->argv[1]->ptr,"failover")) {
-        /* SENTINEL FAILOVER <master-name> */
+        /* SENTINEL FAILOVER <master-name>
+         * 对指定的 Master 手动强制执行一次切换
+         */
         sentinelRedisInstance *ri;
 
         if (c->argc != 3) goto numargserr;
@@ -3157,12 +3168,13 @@ void sentinelCommand(client *c) {
             addReply(c,shared.ok);
         }
     } else if (!strcasecmp(c->argv[1]->ptr,"flushconfig")) {
+        /* SENTINEL flushconfig: 将配置文件刷新到磁盘 */
         if (c->argc != 2) goto numargserr;
         sentinelFlushConfig();
         addReply(c,shared.ok);
         return;
     } else if (!strcasecmp(c->argv[1]->ptr,"remove")) {
-        /* SENTINEL REMOVE <name> */
+        /* SENTINEL REMOVE <name>: 从监控中去除掉指定名称的 Master */
         sentinelRedisInstance *ri;
 
         if (c->argc != 3) goto numargserr;
@@ -3173,7 +3185,10 @@ void sentinelCommand(client *c) {
         sentinelFlushConfig();
         addReply(c,shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr,"ckquorum")) {
-        /* SENTINEL CKQUORUM <name> */
+        /* SENTINEL CKQUORUM <name>
+         * 根据可用哨兵数量, 计算哨兵可用数量是否满足配置数量(认定客观下线的数量);
+         * 是否满足切换数量(即哨兵数量的一半以上)
+         */
         sentinelRedisInstance *ri;
         int usable;
 
@@ -3265,7 +3280,10 @@ void sentinelCommand(client *c) {
         dictReleaseIterator(di);
         if (masters_local != sentinel.masters) dictRelease(masters_local);
     } else if (!strcasecmp(c->argv[1]->ptr,"simulate-failure")) {
-        /* SENTINEL SIMULATE-FAILURE <flag> <flag> ... <flag> */
+        /* SENTINEL SIMULATE-FAILURE <flag> <flag> ... <flag>
+         * 模拟崩溃. flag 可以为 crash-after-election 或 crash-after-promotion, 分别代表
+         * 切换时选举完成主哨兵之后崩溃以及将被选中的从服务器推举为 Master 之后崩溃.
+         */
         int j;
 
         sentinel.simfailure_flags = SENTINEL_SIMFAILURE_NONE;
@@ -4499,6 +4517,19 @@ void sentinelCheckTiltCondition(void) {
     sentinel.previous_time = mstime();
 }
 
+// 该函数主要功能如下:
+// 1. 建立命令连接和消息连接. 消息连接建立后会订阅 Redis 服务的 __sentinel__:hello 频道
+// 2. 在命令连接上每 10s 发送 info 命令进行信息采集; 每 1s 在命令连接上发送 ping 命令探测存活性;
+//    每 2s 在命令连接上发布一条信息, 信息格式如下:
+//      sentinel_ip,sentinel_port,sentinel_runid,current_epoch,master_name,master_ip,master_port,master_config_epoch
+//    - sentinel_ip,sentinel_port: 哨兵的 IP 和端口
+//    - sentinel_runid: 哨兵的 ID (即启动哨兵时生成的 40 字节随机字符串)
+//    - current_epoch: 当前纪元(用于选举和主从切换)
+//    - master_name: Redis Master 的名称
+//    - master_ip,master_port: Redis Master 的 IP 和端口
+//    - master_config_epoch: Redis Master 的配置纪元(用于选举和主从切换)
+// 3. 检测服务是否处于主观下线状态
+// 4. 检测服务是否处于客观下线状态并且需要进行主从切换
 void sentinelTimer(void) {
     sentinelCheckTiltCondition();
     sentinelHandleDictOfRedisInstances(sentinel.masters);

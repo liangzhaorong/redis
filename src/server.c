@@ -1337,6 +1337,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     }
 
     /* Run the Sentinel timer if we are in sentinel mode. */
+    // 以哨兵模式运行时则启动哨兵定时器函数, 在该函数中会建立连接, 并且定时发送心跳包并采集信息
     if (server.sentinel_mode) sentinelTimer();
 
     /* Cleanup expired MIGRATE cached sockets. */
@@ -3905,6 +3906,7 @@ void memtest(size_t megabytes, int passes);
 
 /* Returns 1 if there is --sentinel among the arguments or if
  * argv[0] contains "redis-sentinel". */
+// 检测是否以 sentinel 模式启动
 int checkForSentinelMode(int argc, char **argv) {
     int j;
 
@@ -4111,6 +4113,7 @@ int main(int argc, char **argv) {
     char hashseed[16];
     getRandomHexChars(hashseed,sizeof(hashseed));
     dictSetHashFunctionSeed((uint8_t*)hashseed);
+    // 检测是否已 sentinel 模式启动
     server.sentinel_mode = checkForSentinelMode(argc,argv);
     // 初始化 server 端配置, 包括用户可配置的参数, 以及命令表的初始化
     initServerConfig();
@@ -4127,7 +4130,10 @@ int main(int argc, char **argv) {
      * in sentinel mode will have the effect of populating the sentinel
      * data structures with master nodes to monitor. */
     if (server.sentinel_mode) {
-        initSentinelConfig();
+        initSentinelConfig(); // 将监听端口置为 26379
+        // 更改哨兵可执行命令. 哨兵中只能执行有限的几种服务端命令, 
+        // 如 ping,sentinel,subscribe,publish,info 等
+        // 该函数还会对哨兵进行一些初始化
         initSentinel();
     }
 
@@ -4232,6 +4238,7 @@ int main(int argc, char **argv) {
     redisAsciiArt();
     checkTcpBacklogSettings();
 
+    // 以 Redis Server 模式启动
     if (!server.sentinel_mode) {
         /* Things not needed when running in Sentinel mode. */
         serverLog(LL_WARNING,"Server initialized");
@@ -4252,8 +4259,8 @@ int main(int argc, char **argv) {
             serverLog(LL_NOTICE,"Ready to accept connections");
         if (server.sofd > 0)
             serverLog(LL_NOTICE,"The server is now ready to accept connections at %s", server.unixsocket);
-    } else {
-        sentinelIsRunning();
+    } else { // 以哨兵模式启动
+        sentinelIsRunning(); // 随机生成一个 40 字节的哨兵 ID, 打印启动日志
     }
 
     /* Warning the user about suspicious maxmemory setting. */
